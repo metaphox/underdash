@@ -159,6 +159,126 @@ output:
 
 Both modes automatically detect when stdout is not a TTY and fall back to plain output.
 
+### Prompt Template
+
+The prompt sent to the backend is assembled from fixed and dynamic parts. The full structure is:
+
+```
+[System Prompt]
+[Context Block]
+[User Message]
+```
+
+#### System Prompt
+
+```
+You are a shell command assistant. You help users accomplish tasks on their system by producing shell commands, scripts, or explanations.
+
+You MUST respond with a single valid JSON object and nothing else. No markdown, no commentary outside the JSON.
+
+JSON schema:
+
+{
+  "type": "command | explanation | script",
+  "command": "...",
+  "explanation": "...",
+  "script": "..."
+}
+
+Rules:
+- "type" is required. It must be one of: "command", "explanation", "script".
+- When type is "command": "command" is required (a single shell expression). Use && or || or pipes to chain steps. "explanation" is optional.
+- When type is "explanation": "explanation" is required. "command" and "script" are absent.
+- When type is "script": "script" is required (a multi-line executable script including shebang). "explanation" is optional.
+- Choose "command" for anything expressible as a one-liner or short pipeline.
+- Choose "script" only when the task genuinely requires multi-line logic (loops, conditionals, temp files).
+- Choose "explanation" when the user is asking a question, not requesting an action.
+
+Constraints:
+- Preserve shell variable references literally (e.g., $TOKEN, $HOME). Never substitute their values.
+- Prefer single commands over scripts when possible.
+- Target the user's detected shell (see context).
+- Do not wrap the JSON in a code fence or any other formatting.
+```
+
+#### Context Block
+
+Injected as a system-level or user-level preamble depending on backend capabilities. Template:
+
+```
+<context>
+<system>
+os: {{.OS}}
+arch: {{.Arch}}
+shell: {{.Shell}}
+</system>
+
+<cwd>
+path: {{.Cwd}}
+{{.DirListing}}
+</cwd>
+
+{{if .Git}}
+<git>
+branch: {{.GitBranch}}
+status: {{.GitStatus}}
+recent_commits:
+{{.GitLog}}
+remote: {{.GitRemote}}
+</git>
+{{end}}
+
+{{if .ProjectType}}
+<project type="{{.ProjectType}}" marker="{{.ProjectMarker}}" />
+{{end}}
+
+{{if .History}}
+<history>
+{{.RecentHistory}}
+</history>
+{{end}}
+
+{{if .ToolHints}}
+<tool_hints>
+{{.ToolHints}}
+</tool_hints>
+{{end}}
+</context>
+```
+
+**Notes on context assembly:**
+- XML-style tags are used as structured delimiters (not actual XML — no need to escape content).
+- Sections are omitted entirely when not available (e.g., no `<git>` block outside a repo).
+- `<tool_hints>` is populated from the parser: explicit `:tool` names become "The user wants to use: curl, sort." The `--` separator becomes "Everything after the marker is supplementary context, not a tool request."
+
+#### User Message
+
+The user's original natural-language input, verbatim (after stripping `:` and `--` syntax markers that have already been extracted into tool hints).
+
+```
+{{.UserInput}}
+```
+
+### Retry Prompt
+
+When the backend returns invalid JSON, underdash retries with the following appended to the conversation:
+
+```
+Your previous response was not valid JSON. Here is what you returned:
+
+---
+{{.MalformedResponse}}
+---
+
+Respond with a single valid JSON object matching the schema. Nothing else.
+```
+
+**Retry rules:**
+- Maximum 3 retries (4 total attempts).
+- If the response does not start with `{` (clearly not JSON), bail immediately with an error message instead of retrying.
+- Each retry includes the malformed response so the model can self-correct.
+- On final failure, display the raw response to the user as a fallback and exit with a non-zero status.
+
 ## Implementation Details
 
 Programming language is Go. Build one executable that does everything.
