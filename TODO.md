@@ -12,6 +12,21 @@
 - [x] **Variable / Environment Expansion**: Defined — always pass `$VAR` literally, never expand. Model is instructed to preserve variable references.
 - [ ] **Execution Policy Edge Cases**: Risk classification for compound commands (`&&`, pipes, `$()`), whether `deny` blocks entirely or still allows override, whether `--yes` bypasses `deny`.
 - [ ] **Error Handling**: Backend unreachable / timeout / rate-limit, invalid API key, generated command fails (non-zero exit), Ctrl+C mid-stream behavior, retry policy.
+- [ ] **First-Run Privacy Acknowledgment**: When a non-local backend (`claude`, `openai`, `http`) is configured, prompt the user once to acknowledge that local context will be uploaded to a third party. Persist the acknowledgment (e.g. `consent: true` in config, or a marker file under `~/.config/underdash/`) so it never appears again. Skip entirely for `stdout` and `local` backends. The full disclosure must also be printable via `underdash --version` / `-v` so users can re-read it without resetting consent.
+
+  Disclosure should enumerate everything that may be transmitted:
+  - OS, architecture, shell name (`$SHELL`)
+  - Current working directory **path** (absolute, may reveal username and project names)
+  - Top-level directory listing — filenames only, capped at 20
+  - Git metadata when inside a repo: branch name, short `git status` (includes paths of modified / untracked files), `origin` remote URL (may include host and username)
+  - Detected project type and marker file (`go.mod`, `package.json`, …)
+  - Recent commit subjects (planned, per SPEC)
+  - Notable tools on `$PATH` (planned, per SPEC)
+  - Shell history — opt-in only, never sent unless `context.history: true`
+  - Names of environment variables referenced in the prompt (values are never sent)
+  - The user's verbatim prompt text, including anything pasted into it (tokens, paths, snippets)
+
+  Open sub-decisions: where to store the consent flag, whether `--yes` should auto-accept on first run, whether to re-prompt when the user switches to a different remote backend, and whether the disclosure text lives in code or a versioned `DISCLOSURE.md`.
 
 ## Design Decisions Pending
 
