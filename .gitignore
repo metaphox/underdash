@@ -17,3 +17,5 @@
 # End of https://mrkandreev.name/snippets/gitignore-generator/#Go
 
 src/underdash
+.env
+underdash

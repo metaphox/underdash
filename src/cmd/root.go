@@ -203,7 +203,12 @@ func resolveBackend(cmd *cobra.Command) (backend.Backend, error) {
 	cfg.APIKey = viper.GetString(prefix + "api_key")
 
 	// Check env_key: if set, use the referenced env var for the API key.
+	// Falls back to a per-type default (e.g. ANTHROPIC_API_KEY for claude) so
+	// the env var works even without a config file declaring env_key.
 	envKey := viper.GetString(prefix + "env_key")
+	if envKey == "" {
+		envKey = defaultEnvKey(cfg.Type)
+	}
 	if envKey != "" {
 		if v := os.Getenv(envKey); v != "" {
 			cfg.APIKey = v
@@ -213,7 +218,21 @@ func resolveBackend(cmd *cobra.Command) (backend.Backend, error) {
 	return backend.New(cfg)
 }
 
+func defaultEnvKey(backendType string) string {
+	switch backendType {
+	case "claude":
+		return "ANTHROPIC_API_KEY"
+	case "openai":
+		return "OPENAI_API_KEY"
+	}
+	return ""
+}
+
 func initializeConfig(cmd *cobra.Command) error {
+	// Load .env from the binary's directory before reading config or env,
+	// so keys defined there are visible to viper and backend resolution.
+	loadDotEnv()
+
 	viper.SetEnvPrefix("UNDERDASH")
 	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_", "-", "_"))
 	viper.AutomaticEnv()

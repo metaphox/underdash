@@ -58,7 +58,16 @@ Underdash supports multiple named backends. Each backend is defined in `config.y
 - `api_key`: API key string (optional — environment variables are preferred)
 - `env_key`: name of the environment variable holding the API key (e.g., `ANTHROPIC_API_KEY`)
 
-If both `api_key` and `env_key` are set, the environment variable takes precedence. Underdash should warn at startup if the config file containing an `api_key` is world-readable.
+If both `api_key` and `env_key` are set, the environment variable takes precedence. When `env_key` is not configured, each backend type falls back to a conventional default — `claude` reads `ANTHROPIC_API_KEY`, `openai` reads `OPENAI_API_KEY` — so the env var works without any config file. Underdash should warn at startup if the config file containing an `api_key` is world-readable.
+
+#### .env Loading
+
+At startup, before reading the YAML config, Underdash looks for a `.env` file in the directory of the running binary (resolving symlinks first, so it finds the real install location even when invoked via the `_` alias) and loads any `KEY=VALUE` pairs into the process environment.
+
+- Existing environment variables are **not** overridden — values already present in the shell win.
+- A missing or unreadable `.env` is silently ignored; it is not required.
+- Parse errors are non-fatal: Underdash continues without the variables it could not load.
+- This file is the recommended place to keep API keys (e.g., `ANTHROPIC_API_KEY=...`) so that backends configured with `env_key` resolve without polluting the user's shell profile.
 
 Example config:
 

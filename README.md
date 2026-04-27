@@ -13,3 +13,8 @@ Usage
 `_ model` - prints the model currently in use.
 
 `_ config` - list the configurations.
+
+Build
+-----
+
+`cd src && go build -o ..`
