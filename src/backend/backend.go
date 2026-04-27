@@ -44,6 +44,12 @@ func New(cfg Config) (Backend, error) {
 			Model:    model,
 			Endpoint: cfg.Endpoint,
 		}, nil
+	case "openai":
+		return nil, fmt.Errorf("openai backend is not yet implemented (coming in v0.2)")
+	case "local":
+		return nil, fmt.Errorf("local backend is not yet implemented (coming in v0.2)")
+	case "http":
+		return nil, fmt.Errorf("http backend is not yet implemented (coming in v0.2)")
 	default:
 		return nil, fmt.Errorf("unknown backend type: %q", cfg.Type)
 	}

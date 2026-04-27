@@ -52,7 +52,8 @@ func Execute() {
 func init() {
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default: $HOME/.config/underdash/config.yaml)")
 	rootCmd.Flags().StringP("backend", "b", "", "backend to use (default from config)")
-	rootCmd.Flags().BoolP("dry-run", "n", false, "print the assembled prompt without calling any backend")
+	rootCmd.Flags().BoolP("dry-run", "n", false, "show the generated command without executing")
+	rootCmd.Flags().Bool("no-exec", false, "alias for --dry-run")
 	rootCmd.Flags().BoolP("yes", "y", false, "skip all confirmations")
 	rootCmd.Flags().String("output", "", "output mode: streaming or plain (default: streaming)")
 }
@@ -61,6 +62,17 @@ func runRoot(cmd *cobra.Command, args []string) error {
 	if len(args) == 0 {
 		return cmd.Help()
 	}
+
+	// Set output mode from flag.
+	outputMode, _ := cmd.Flags().GetString("output")
+	if outputMode != "" {
+		display.SetOutputMode(outputMode)
+	}
+
+	// Resolve dry-run: either --dry-run or --no-exec.
+	dryRun, _ := cmd.Flags().GetBool("dry-run")
+	noExec, _ := cmd.Flags().GetBool("no-exec")
+	dryRun = dryRun || noExec
 
 	// 1. Parse input.
 	inp := input.Parse(args)
@@ -74,21 +86,13 @@ func runRoot(cmd *cobra.Command, args []string) error {
 	userMsg := prompt.BuildUserMessage(inp)
 	fullSystemPrompt := sysProm + "\n\n" + ctxBlock
 
-	// 4. Handle dry-run.
-	dryRun, _ := cmd.Flags().GetBool("dry-run")
-	if dryRun {
-		display.ShowDryRun(fullSystemPrompt, userMsg)
-		return nil
-	}
-
-	// 5. Resolve backend.
+	// 4. Resolve backend.
 	be, err := resolveBackend(cmd)
 	if err != nil {
 		return err
 	}
 
-	// 6. Send to backend with retry loop.
-	autoYes, _ := cmd.Flags().GetBool("yes")
+	// 5. Send to backend with retry loop.
 	resp, err := sendWithRetry(cmd.Context(), be, fullSystemPrompt, userMsg)
 	if err != nil {
 		return err
@@ -99,8 +103,9 @@ func runRoot(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// 7. Execute / display result.
-	return exec.Run(resp, autoYes, false)
+	// 6. Execute / display result.
+	autoYes, _ := cmd.Flags().GetBool("yes")
+	return exec.Run(resp, autoYes, dryRun)
 }
 
 func sendWithRetry(ctx context.Context, be backend.Backend, systemPrompt string, userMsg string) (*response.LLMResponse, error) {
@@ -229,7 +234,40 @@ func initializeConfig(cmd *cobra.Command) error {
 		if !errors.As(err, &configFileNotFoundError) {
 			return err
 		}
+	} else {
+		// Config file loaded — check permissions.
+		cfgPath := viper.ConfigFileUsed()
+		if warning := checkConfigPermissions(cfgPath); warning != "" {
+			fmt.Fprintln(os.Stderr, "warning:", warning)
+		}
 	}
 
 	return viper.BindPFlags(cmd.Flags())
+}
+
+// checkConfigPermissions checks if a config file containing api_key values
+// is world-readable and returns a warning message if so.
+func checkConfigPermissions(path string) string {
+	info, err := os.Stat(path)
+	if err != nil {
+		return ""
+	}
+
+	mode := info.Mode().Perm()
+	// Check if group or others can read (0044 = group-read + other-read).
+	if mode&0044 == 0 {
+		return "" // not world-readable, fine
+	}
+
+	// Check if the file contains any api_key.
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+
+	if strings.Contains(string(content), "api_key") {
+		return fmt.Sprintf("config file %s is world-readable and contains API keys. Consider: chmod 600 %s", path, path)
+	}
+
+	return ""
 }

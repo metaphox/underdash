@@ -8,19 +8,36 @@ import (
 	"golang.org/x/term"
 )
 
-// IsTTY returns true if stderr is a terminal (we use stderr for UI so stdout stays clean).
+// outputMode holds the configured output mode ("streaming" or "plain").
+var outputMode string
+
+// SetOutputMode sets the output mode. Use "plain" to force plain output.
+func SetOutputMode(mode string) {
+	outputMode = mode
+}
+
+// IsTTY returns true if stdout is a terminal.
 func IsTTY() bool {
-	return term.IsTerminal(int(os.Stderr.Fd()))
+	return term.IsTerminal(int(os.Stdout.Fd()))
+}
+
+// IsPlainMode returns true if output should be plain (no spinner, no ANSI).
+// True when: --output=plain is set, OR stdout is not a TTY.
+func IsPlainMode() bool {
+	if outputMode == "plain" {
+		return true
+	}
+	return !IsTTY()
 }
 
 // --- Spinner ---
 
 // Spinner shows a single-line progress indicator on stderr.
 type Spinner struct {
-	frames  []string
-	stop    chan struct{}
-	done    chan struct{}
-	active  bool
+	frames []string
+	stop   chan struct{}
+	done   chan struct{}
+	active bool
 }
 
 // NewSpinner creates a new spinner (does not start it).
@@ -32,9 +49,9 @@ func NewSpinner() *Spinner {
 	}
 }
 
-// Start begins the spinner with the given message. No-op if not a TTY.
+// Start begins the spinner with the given message. No-op in plain mode.
 func (s *Spinner) Start(msg string) {
-	if !IsTTY() {
+	if IsPlainMode() {
 		return
 	}
 	s.active = true
@@ -70,10 +87,10 @@ func (s *Spinner) Stop() {
 
 // ShowCommand prints a command and optional explanation to stderr.
 func ShowCommand(command string, explanation string) {
-	if IsTTY() {
-		fmt.Fprintf(os.Stderr, "\033[1;32m❯\033[0m %s\n", command)
-	} else {
+	if IsPlainMode() {
 		fmt.Fprintf(os.Stderr, "> %s\n", command)
+	} else {
+		fmt.Fprintf(os.Stderr, "\033[1;32m❯\033[0m %s\n", command)
 	}
 	if explanation != "" {
 		fmt.Fprintf(os.Stderr, "  %s\n", explanation)
@@ -102,14 +119,14 @@ func ShowCommandOutput(output string) {
 
 // ShowError prints an error message to stderr.
 func ShowError(msg string) {
-	if IsTTY() {
-		fmt.Fprintf(os.Stderr, "\033[1;31merror:\033[0m %s\n", msg)
-	} else {
+	if IsPlainMode() {
 		fmt.Fprintf(os.Stderr, "error: %s\n", msg)
+	} else {
+		fmt.Fprintf(os.Stderr, "\033[1;31merror:\033[0m %s\n", msg)
 	}
 }
 
-// ShowDryRun prints what would be sent to the backend.
+// ShowDryRun prints the generated command/explanation/script without executing.
 func ShowDryRun(systemPrompt string, userMessage string) {
 	fmt.Println("=== DRY RUN ===")
 	fmt.Println()

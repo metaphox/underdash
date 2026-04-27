@@ -24,23 +24,18 @@ type LLMResponse struct {
 }
 
 // Parse attempts to extract a valid LLMResponse from raw model output.
+// The response must be a raw JSON object — no prose wrapping, no code fences.
 func Parse(raw string) (*LLMResponse, error) {
 	raw = strings.TrimSpace(raw)
 
-	// Try direct unmarshal first.
+	if !strings.HasPrefix(raw, "{") {
+		return nil, fmt.Errorf("invalid JSON response: does not start with '{'")
+	}
+
+	// Try direct unmarshal.
 	resp, err := tryUnmarshal(raw)
 	if err == nil {
 		return resp, nil
-	}
-
-	// Fallback: find the first { and last } and try that substring.
-	start := strings.Index(raw, "{")
-	end := strings.LastIndex(raw, "}")
-	if start >= 0 && end > start {
-		resp, err = tryUnmarshal(raw[start : end+1])
-		if err == nil {
-			return resp, nil
-		}
 	}
 
 	return nil, fmt.Errorf("invalid JSON response: %w", err)
@@ -76,8 +71,9 @@ func validate(resp *LLMResponse) (*LLMResponse, error) {
 	return resp, nil
 }
 
-// IsRetryable returns true if the raw response looks like a failed attempt at JSON
-// (contains '{') rather than something completely unrelated.
+// IsRetryable returns true if the raw response starts with '{', indicating
+// it was an attempt at JSON (just malformed). Returns false for clearly non-JSON
+// responses (prose, code fences, etc.) which should bail immediately.
 func IsRetryable(raw string) bool {
-	return strings.Contains(raw, "{")
+	return strings.HasPrefix(strings.TrimSpace(raw), "{")
 }
