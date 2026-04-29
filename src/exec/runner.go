@@ -12,14 +12,15 @@ import (
 )
 
 // Run executes or displays the model's response according to the execution policy.
-func Run(resp *response.LLMResponse, autoYes bool, dryRun bool) error {
+// overrides may be nil; when set, deny/auto_run/confirm patterns from config take precedence.
+func Run(resp *response.LLMResponse, autoYes bool, dryRun bool, overrides *PolicyOverrides) error {
 	switch resp.Type {
 	case response.Explanation:
 		display.ShowExplanation(resp.Explanation)
 		return nil
 
 	case response.Command:
-		return runCommand(resp.CommandStr, resp.Explanation, autoYes, dryRun)
+		return runCommand(resp.CommandStr, resp.Explanation, autoYes, dryRun, overrides)
 
 	case response.Script:
 		return runScript(resp.ScriptStr, resp.Explanation, autoYes, dryRun)
@@ -29,9 +30,15 @@ func Run(resp *response.LLMResponse, autoYes bool, dryRun bool) error {
 	}
 }
 
-func runCommand(command string, explanation string, autoYes bool, dryRun bool) error {
-	risk := Classify(command)
+func runCommand(command string, explanation string, autoYes bool, dryRun bool, overrides *PolicyOverrides) error {
+	risk := ClassifyWithOverrides(command, overrides)
 	display.ShowCommand(command, explanation)
+
+	// Denied is unconditional — --yes cannot bypass it.
+	if risk == Denied {
+		display.ShowError("Command is denied by execution policy.")
+		return fmt.Errorf("denied by policy")
+	}
 
 	if dryRun {
 		return nil

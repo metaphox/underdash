@@ -105,7 +105,23 @@ func runRoot(cmd *cobra.Command, args []string) error {
 
 	// 6. Execute / display result.
 	autoYes, _ := cmd.Flags().GetBool("yes")
-	return exec.Run(resp, autoYes, dryRun)
+	return exec.Run(resp, autoYes, dryRun, loadPolicyOverrides())
+}
+
+// loadPolicyOverrides reads execution.auto_run / execution.confirm / execution.deny
+// from Viper. Returns nil if no overrides are configured.
+func loadPolicyOverrides() *exec.PolicyOverrides {
+	autoRun := viper.GetStringSlice("execution.auto_run")
+	confirm := viper.GetStringSlice("execution.confirm")
+	deny := viper.GetStringSlice("execution.deny")
+	if len(autoRun) == 0 && len(confirm) == 0 && len(deny) == 0 {
+		return nil
+	}
+	return &exec.PolicyOverrides{
+		AutoRun: autoRun,
+		Confirm: confirm,
+		Deny:    deny,
+	}
 }
 
 func sendWithRetry(ctx context.Context, be backend.Backend, systemPrompt string, userMsg string) (*response.LLMResponse, error) {
