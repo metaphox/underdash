@@ -63,8 +63,11 @@ func runRoot(cmd *cobra.Command, args []string) error {
 		return cmd.Help()
 	}
 
-	// Set output mode from flag.
+	// Set output mode: CLI flag wins, falling back to config.
 	outputMode, _ := cmd.Flags().GetString("output")
+	if outputMode == "" {
+		outputMode = viper.GetString("output.mode")
+	}
 	if outputMode != "" {
 		display.SetOutputMode(outputMode)
 	}

@@ -54,26 +54,45 @@ func BuildContextBlock(ctx *uctx.SystemContext, inp *input.ParsedInput) string {
 	if ctx.Shell != "" {
 		fmt.Fprintf(&b, "shell: %s\n", ctx.Shell)
 	}
+	if len(ctx.PathTools) > 0 {
+		fmt.Fprintf(&b, "tools: %s\n", strings.Join(ctx.PathTools, ", "))
+	}
 	b.WriteString("</system>\n")
 
 	// CWD listing.
 	b.WriteString("\n<cwd>\n")
 	fmt.Fprintf(&b, "path: %s\n", ctx.CWD)
-	if len(ctx.DirListing) > 0 {
-		for _, entry := range ctx.DirListing {
-			fmt.Fprintf(&b, "  %s\n", entry)
+	for _, e := range ctx.DirEntries {
+		switch e.Type {
+		case "dir":
+			fmt.Fprintf(&b, "  %s/  dir\n", e.Name)
+		case "file":
+			fmt.Fprintf(&b, "  %s  file  %s\n", e.Name, formatSize(e.Size))
+		default:
+			fmt.Fprintf(&b, "  %s  %s\n", e.Name, e.Type)
 		}
+	}
+	if ctx.DirOverflow > 0 {
+		fmt.Fprintf(&b, "  ... and %d more\n", ctx.DirOverflow)
 	}
 	b.WriteString("</cwd>\n")
 
 	// Git — only if in a repo.
-	if ctx.GitBranch != "" {
+	if ctx.InGitRepo {
 		b.WriteString("\n<git>\n")
-		fmt.Fprintf(&b, "branch: %s\n", ctx.GitBranch)
+		if ctx.GitBranch != "" {
+			fmt.Fprintf(&b, "branch: %s\n", ctx.GitBranch)
+		}
 		if ctx.GitStatus != "" {
 			fmt.Fprintf(&b, "status:\n%s\n", ctx.GitStatus)
 		} else {
 			b.WriteString("status: clean\n")
+		}
+		if len(ctx.GitLog) > 0 {
+			b.WriteString("recent_commits:\n")
+			for _, subject := range ctx.GitLog {
+				fmt.Fprintf(&b, "  %s\n", subject)
+			}
 		}
 		if ctx.GitRemote != "" {
 			fmt.Fprintf(&b, "remote: %s\n", ctx.GitRemote)
@@ -84,6 +103,15 @@ func BuildContextBlock(ctx *uctx.SystemContext, inp *input.ParsedInput) string {
 	// Project type.
 	if ctx.ProjectType != "" {
 		fmt.Fprintf(&b, "\n<project type=%q marker=%q />\n", ctx.ProjectType, ctx.ProjectFile)
+	}
+
+	// Shell history — opt-in.
+	if len(ctx.ShellHistory) > 0 {
+		b.WriteString("\n<history>\n")
+		for _, line := range ctx.ShellHistory {
+			fmt.Fprintf(&b, "  %s\n", line)
+		}
+		b.WriteString("</history>\n")
 	}
 
 	// Tool hints.
@@ -104,6 +132,25 @@ func BuildUserMessage(inp *input.ParsedInput) string {
 		msg += "\n\nAdditional context: " + inp.SupplementaryPrompt
 	}
 	return msg
+}
+
+// formatSize renders a byte count in a compact human-readable form.
+func formatSize(n int64) string {
+	const (
+		kb = 1024
+		mb = 1024 * kb
+		gb = 1024 * mb
+	)
+	switch {
+	case n >= gb:
+		return fmt.Sprintf("%.1fG", float64(n)/float64(gb))
+	case n >= mb:
+		return fmt.Sprintf("%.1fM", float64(n)/float64(mb))
+	case n >= kb:
+		return fmt.Sprintf("%.1fK", float64(n)/float64(kb))
+	default:
+		return fmt.Sprintf("%dB", n)
+	}
 }
 
 // BuildRetryMessage creates the retry prompt when the model returned malformed JSON.

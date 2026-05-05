@@ -88,6 +88,24 @@ func TestParse_MissingRequiredField(t *testing.T) {
 	}
 }
 
+// --- Script shebang validation ---
+
+func TestParse_ScriptMissingShebang(t *testing.T) {
+	raw := `{"type":"script","script":"echo hello\nls"}`
+	_, err := Parse(raw)
+	if err == nil {
+		t.Error("Parse() should fail when script does not start with a shebang")
+	}
+}
+
+func TestParse_ScriptShebangAfterWhitespace(t *testing.T) {
+	// Leading whitespace before #! is tolerated (some models add a stray newline).
+	raw := `{"type":"script","script":"\n#!/bin/sh\necho hello"}`
+	if _, err := Parse(raw); err != nil {
+		t.Errorf("Parse() should accept shebang after leading whitespace, got: %v", err)
+	}
+}
+
 // --- Finding #8: IsRetryable strictness ---
 
 func TestIsRetryable_StartsWithBrace(t *testing.T) {

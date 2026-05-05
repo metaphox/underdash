@@ -32,6 +32,13 @@
 
 - [ ] **Context Token Budget**: How much context (dir listing, git log, PATH tools) is too much? Should the prompt template enforce a hard token/character budget, or leave it unbounded? Especially relevant for local models with small context windows.
 - [ ] **System Prompt Length vs. Speed**: Long system prompts improve model compliance but cost tokens on every invocation. For a one-shot CLI tool where speed and cost matter, how minimal can the role definition be?
+- [ ] **Real Streaming Display**: SSE is now wired under the hood (Claude backend), but output is still buffered until the full JSON parses. To stream the *meaningful* response (not raw JSON characters) in real time, we'd add a `SendStream(ctx, req, onText func(string))` to the backend interface and run a small JSON-string extractor in front of the SSE deltas — emitting only the `command` / `explanation` / `script` field bytes (decoding `\n`, `\"`, etc.) to stderr/stdout as they arrive. Spinner stops on the first emitted byte instead of the first wire byte.
+
+  Open sub-decisions:
+  - **Double-render**: should streamed output *replace* the post-parse `display.Show*` rendering so the body isn't printed twice, or should `Show*` always re-render (cleaner separation, costs a duplicate print)?
+  - **Retry UX**: on JSON parse failure, do we wipe streamed garbage with ANSI cursor-up clears and re-stream the retry, or just append `(retrying…)` below and accept the noise?
+  - **Plain / non-TTY mode**: skip streaming entirely (buffer then print, like today) since cursor control isn't available, or stream tokens line-buffered without ANSI?
+  - **Field ordering**: rely on the model emitting `type` before the value field (true in practice for Claude), or detect any of the three known field keys and stream whichever appears first?
 
 ## Lower Priority (cleanup & clarity)
 

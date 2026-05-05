@@ -1,22 +1,22 @@
 package backend
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-	"time"
+	"strings"
 )
 
 const (
 	defaultClaudeEndpoint = "https://api.anthropic.com/v1/messages"
 	anthropicVersion      = "2023-06-01"
-	defaultTimeout        = 30 * time.Second
 )
 
-// ClaudeBackend calls the Anthropic Messages API via raw HTTP.
+// ClaudeBackend calls the Anthropic Messages API via raw HTTP using SSE streaming.
 type ClaudeBackend struct {
 	APIKey   string
 	Model    string
@@ -26,10 +26,11 @@ type ClaudeBackend struct {
 func (c *ClaudeBackend) Name() string { return "claude" }
 
 type claudeRequest struct {
-	Model     string           `json:"model"`
-	MaxTokens int              `json:"max_tokens"`
-	System    string           `json:"system"`
-	Messages  []claudeMessage  `json:"messages"`
+	Model     string          `json:"model"`
+	MaxTokens int             `json:"max_tokens"`
+	System    string          `json:"system"`
+	Messages  []claudeMessage `json:"messages"`
+	Stream    bool            `json:"stream"`
 }
 
 type claudeMessage struct {
@@ -37,11 +38,14 @@ type claudeMessage struct {
 	Content string `json:"content"`
 }
 
-type claudeResponse struct {
-	Content []struct {
+// claudeStreamEvent is the union of SSE event payloads we care about.
+// Unused fields from the API (usage, index, etc.) are ignored.
+type claudeStreamEvent struct {
+	Type  string `json:"type"`
+	Delta struct {
 		Type string `json:"type"`
 		Text string `json:"text"`
-	} `json:"content"`
+	} `json:"delta"`
 	Error *struct {
 		Type    string `json:"type"`
 		Message string `json:"message"`
@@ -61,6 +65,7 @@ func (c *ClaudeBackend) Send(ctx context.Context, req Request) (string, error) {
 		Messages: []claudeMessage{
 			{Role: "user", Content: req.UserMessage},
 		},
+		Stream: true,
 	}
 
 	payload, err := json.Marshal(body)
@@ -68,15 +73,13 @@ func (c *ClaudeBackend) Send(ctx context.Context, req Request) (string, error) {
 		return "", fmt.Errorf("marshal request: %w", err)
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, defaultTimeout)
-	defer cancel()
-
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
 	if err != nil {
 		return "", fmt.Errorf("create request: %w", err)
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "text/event-stream")
 	httpReq.Header.Set("x-api-key", c.APIKey)
 	httpReq.Header.Set("anthropic-version", anthropicVersion)
 
@@ -86,12 +89,8 @@ func (c *ClaudeBackend) Send(ctx context.Context, req Request) (string, error) {
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("read response: %w", err)
-	}
-
 	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
 		switch resp.StatusCode {
 		case 401:
 			return "", fmt.Errorf("authentication failed: invalid API key")
@@ -102,18 +101,45 @@ func (c *ClaudeBackend) Send(ctx context.Context, req Request) (string, error) {
 		}
 	}
 
-	var cResp claudeResponse
-	if err := json.Unmarshal(respBody, &cResp); err != nil {
-		return "", fmt.Errorf("decode response: %w", err)
+	return readClaudeStream(resp.Body)
+}
+
+// readClaudeStream consumes an Anthropic Messages SSE stream and returns the
+// concatenated text from all `content_block_delta` text deltas.
+func readClaudeStream(r io.Reader) (string, error) {
+	var sb strings.Builder
+	scanner := bufio.NewScanner(r)
+	// SSE lines can be long; bump the buffer.
+	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		data := strings.TrimPrefix(line, "data: ")
+		if data == "" || data == "[DONE]" {
+			continue
+		}
+
+		var ev claudeStreamEvent
+		if err := json.Unmarshal([]byte(data), &ev); err != nil {
+			// Malformed event line — skip.
+			continue
+		}
+		if ev.Error != nil {
+			return "", fmt.Errorf("API error: %s: %s", ev.Error.Type, ev.Error.Message)
+		}
+		if ev.Type == "content_block_delta" && ev.Delta.Type == "text_delta" {
+			sb.WriteString(ev.Delta.Text)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return "", fmt.Errorf("read stream: %w", err)
 	}
 
-	if cResp.Error != nil {
-		return "", fmt.Errorf("API error: %s: %s", cResp.Error.Type, cResp.Error.Message)
-	}
-
-	if len(cResp.Content) == 0 {
+	if sb.Len() == 0 {
 		return "", fmt.Errorf("empty response from API")
 	}
-
-	return cResp.Content[0].Text, nil
+	return sb.String(), nil
 }

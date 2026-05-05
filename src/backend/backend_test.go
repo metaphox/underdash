@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -80,4 +81,57 @@ func containsSubstr(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+// --- Claude SSE streaming ---
+
+func TestReadClaudeStream_ConcatenatesTextDeltas(t *testing.T) {
+	stream := strings.Join([]string{
+		`event: message_start`,
+		`data: {"type":"message_start"}`,
+		``,
+		`event: content_block_start`,
+		`data: {"type":"content_block_start","index":0}`,
+		``,
+		`event: content_block_delta`,
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"{\"type\":"}}`,
+		``,
+		`event: content_block_delta`,
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\"command\",\"command\":\"ls\"}"}}`,
+		``,
+		`event: content_block_stop`,
+		`data: {"type":"content_block_stop","index":0}`,
+		``,
+		`event: message_stop`,
+		`data: {"type":"message_stop"}`,
+		``,
+	}, "\n")
+
+	got, err := readClaudeStream(strings.NewReader(stream))
+	if err != nil {
+		t.Fatalf("readClaudeStream: %v", err)
+	}
+	want := `{"type":"command","command":"ls"}`
+	if got != want {
+		t.Errorf("readClaudeStream\n got: %q\nwant: %q", got, want)
+	}
+}
+
+func TestReadClaudeStream_PropagatesErrorEvent(t *testing.T) {
+	stream := "data: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"servers busy\"}}\n\n"
+	_, err := readClaudeStream(strings.NewReader(stream))
+	if err == nil {
+		t.Fatal("expected error from error event")
+	}
+	if !strings.Contains(err.Error(), "overloaded_error") || !strings.Contains(err.Error(), "servers busy") {
+		t.Errorf("error should surface event details, got: %v", err)
+	}
+}
+
+func TestReadClaudeStream_EmptyIsError(t *testing.T) {
+	stream := "event: message_start\ndata: {\"type\":\"message_start\"}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+	_, err := readClaudeStream(strings.NewReader(stream))
+	if err == nil {
+		t.Fatal("expected error when no text deltas were received")
+	}
 }

@@ -63,6 +63,9 @@ func validate(resp *LLMResponse) (*LLMResponse, error) {
 		if resp.ScriptStr == "" {
 			return nil, fmt.Errorf("type is %q but script field is empty", resp.Type)
 		}
+		if !strings.HasPrefix(strings.TrimLeft(resp.ScriptStr, " \t\r\n"), "#!") {
+			return nil, fmt.Errorf("type is %q but script does not start with a shebang", resp.Type)
+		}
 	case "":
 		return nil, fmt.Errorf("missing required field: type")
 	default:
