@@ -1,11 +1,12 @@
+// Package prompt builds prompts from system context and user input.
 package prompt
 
 import (
 	"fmt"
 	"strings"
 
-	uctx "metaphox/underdash/context"
 	"metaphox/underdash/input"
+	"metaphox/underdash/sysinfo"
 )
 
 const systemPrompt = `You are a shell command assistant. You help users accomplish tasks on their system by producing shell commands, scripts, or explanations.
@@ -42,7 +43,7 @@ func BuildSystemPrompt() string {
 }
 
 // BuildContextBlock assembles the XML-tagged context block from gathered system context.
-func BuildContextBlock(ctx *uctx.SystemContext, inp *input.ParsedInput) string {
+func BuildContextBlock(ctx *sysinfo.SystemContext, inp *input.ParsedInput) string {
 	var b strings.Builder
 
 	b.WriteString("<context>\n")

@@ -1,3 +1,4 @@
+// Package display handles terminal output formatting.
 package display
 
 import (

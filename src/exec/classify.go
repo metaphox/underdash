@@ -1,3 +1,4 @@
+// Package exec classifies and runs shell commands.
 package exec
 
 import (

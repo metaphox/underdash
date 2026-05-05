@@ -23,6 +23,7 @@ type ClaudeBackend struct {
 	Endpoint string
 }
 
+// Name returns the backend identifier used for configuration and selection.
 func (c *ClaudeBackend) Name() string { return "claude" }
 
 type claudeRequest struct {
@@ -52,6 +53,7 @@ type claudeStreamEvent struct {
 	} `json:"error"`
 }
 
+// Send sends a request to Claude and returns the raw model response text.
 func (c *ClaudeBackend) Send(ctx context.Context, req Request) (string, error) {
 	endpoint := c.Endpoint
 	if endpoint == "" {

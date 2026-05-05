@@ -3,36 +3,37 @@ package cmd
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
 func TestLoadDotEnvFrom_LoadsKeys(t *testing.T) {
+	key := testEnvKey(t, "loads")
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".env")
-	if err := os.WriteFile(path, []byte("UNDERDASH_TEST_KEY=from_dotenv\n"), 0600); err != nil {
+	if err := os.WriteFile(path, []byte(key+"=from_dotenv\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("UNDERDASH_TEST_KEY", "")
-	os.Unsetenv("UNDERDASH_TEST_KEY")
 
 	loadDotEnvFrom(path)
 
-	if got := os.Getenv("UNDERDASH_TEST_KEY"); got != "from_dotenv" {
-		t.Errorf("expected UNDERDASH_TEST_KEY=from_dotenv, got %q", got)
+	if got := os.Getenv(key); got != "from_dotenv" {
+		t.Errorf("expected %s=from_dotenv, got %q", key, got)
 	}
 }
 
 func TestLoadDotEnvFrom_DoesNotOverrideExisting(t *testing.T) {
+	key := testEnvKey(t, "override")
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".env")
-	if err := os.WriteFile(path, []byte("UNDERDASH_TEST_KEY=from_dotenv\n"), 0600); err != nil {
+	if err := os.WriteFile(path, []byte(key+"=from_dotenv\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("UNDERDASH_TEST_KEY", "from_shell")
+	t.Setenv(key, "from_shell")
 
 	loadDotEnvFrom(path)
 
-	if got := os.Getenv("UNDERDASH_TEST_KEY"); got != "from_shell" {
+	if got := os.Getenv(key); got != "from_shell" {
 		t.Errorf("expected shell value to win, got %q", got)
 	}
 }
@@ -47,46 +48,49 @@ func TestLoadDotEnvFrom_MissingFileIsNoOp(t *testing.T) {
 
 func TestLoadDotEnvFrom_PartialLoadOnBadLines(t *testing.T) {
 	// Spec: parse errors are non-fatal; valid lines must still load.
+	keyBefore := testEnvKey(t, "good_before")
+	keyAfter := testEnvKey(t, "good_after")
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".env")
-	contents := "UNDERDASH_GOOD_BEFORE=alpha\n" +
+	contents := keyBefore + "=alpha\n" +
 		"THIS LINE HAS NO EQUALS\n" +
 		"=value_with_no_key\n" +
 		"123BAD=numeric_first_char\n" +
 		"# a comment\n" +
 		"\n" +
-		"UNDERDASH_GOOD_AFTER=\"bravo\"\n"
+		keyAfter + "=\"bravo\"\n"
 	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
 		t.Fatal(err)
 	}
-	for _, k := range []string{"UNDERDASH_GOOD_BEFORE", "UNDERDASH_GOOD_AFTER", "123BAD"} {
-		os.Unsetenv(k)
-	}
 
 	loadDotEnvFrom(path)
 
-	if got := os.Getenv("UNDERDASH_GOOD_BEFORE"); got != "alpha" {
-		t.Errorf("UNDERDASH_GOOD_BEFORE: want %q, got %q", "alpha", got)
+	if got := os.Getenv(keyBefore); got != "alpha" {
+		t.Errorf("%s: want %q, got %q", keyBefore, "alpha", got)
 	}
-	if got := os.Getenv("UNDERDASH_GOOD_AFTER"); got != "bravo" {
-		t.Errorf("UNDERDASH_GOOD_AFTER: want %q (quotes stripped), got %q", "bravo", got)
+	if got := os.Getenv(keyAfter); got != "bravo" {
+		t.Errorf("%s: want %q (quotes stripped), got %q", keyAfter, "bravo", got)
 	}
-	os.Unsetenv("UNDERDASH_GOOD_BEFORE")
-	os.Unsetenv("UNDERDASH_GOOD_AFTER")
 }
 
 func TestLoadDotEnvFrom_HandlesExportPrefix(t *testing.T) {
+	key := testEnvKey(t, "exported")
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".env")
-	if err := os.WriteFile(path, []byte("export UNDERDASH_EXPORTED=ok\n"), 0600); err != nil {
+	if err := os.WriteFile(path, []byte("export "+key+"=ok\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	os.Unsetenv("UNDERDASH_EXPORTED")
 
 	loadDotEnvFrom(path)
 
-	if got := os.Getenv("UNDERDASH_EXPORTED"); got != "ok" {
+	if got := os.Getenv(key); got != "ok" {
 		t.Errorf("expected exported var to load, got %q", got)
 	}
-	os.Unsetenv("UNDERDASH_EXPORTED")
+}
+
+func testEnvKey(t *testing.T, suffix string) string {
+	t.Helper()
+	name := strings.ReplaceAll(t.Name(), "/", "_")
+	name = strings.ToUpper(name)
+	return "UNDERDASH_" + name + "_" + strings.ToUpper(suffix)
 }

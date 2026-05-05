@@ -1,7 +1,4 @@
-/*
-Copyright © 2026 Tao Wu <foxisme@gmail.com>
-*/
-
+// Package cmd implements CLI commands for the underdash binary.
 package cmd
 
 import (
@@ -15,12 +12,12 @@ import (
 	"github.com/spf13/viper"
 
 	"metaphox/underdash/backend"
-	uctx "metaphox/underdash/context"
 	"metaphox/underdash/display"
 	"metaphox/underdash/exec"
 	"metaphox/underdash/input"
 	"metaphox/underdash/prompt"
 	"metaphox/underdash/response"
+	"metaphox/underdash/sysinfo"
 )
 
 const maxRetries = 3
@@ -42,6 +39,7 @@ var (
 	}
 )
 
+// Execute runs the root command and exits the process on error.
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
 		display.ShowError(err.Error())
@@ -64,7 +62,7 @@ func runRoot(cmd *cobra.Command, args []string) error {
 	}
 
 	// Set output mode: CLI flag wins, falling back to config.
-	outputMode, _ := cmd.Flags().GetString("output")
+	outputMode, _ := cmd.Flags().GetString("output") // err is nil; flag registered in init()
 	if outputMode == "" {
 		outputMode = viper.GetString("output.mode")
 	}
@@ -73,15 +71,15 @@ func runRoot(cmd *cobra.Command, args []string) error {
 	}
 
 	// Resolve dry-run: either --dry-run or --no-exec.
-	dryRun, _ := cmd.Flags().GetBool("dry-run")
-	noExec, _ := cmd.Flags().GetBool("no-exec")
+	dryRun, _ := cmd.Flags().GetBool("dry-run") // err is nil; flag registered in init()
+	noExec, _ := cmd.Flags().GetBool("no-exec") // err is nil; flag registered in init()
 	dryRun = dryRun || noExec
 
 	// 1. Parse input.
 	inp := input.Parse(args)
 
 	// 2. Gather context.
-	sysCtx := uctx.Gather()
+	sysCtx := sysinfo.Gather()
 
 	// 3. Build prompt.
 	sysProm := prompt.BuildSystemPrompt()
@@ -107,7 +105,7 @@ func runRoot(cmd *cobra.Command, args []string) error {
 	}
 
 	// 6. Execute / display result.
-	autoYes, _ := cmd.Flags().GetBool("yes")
+	autoYes, _ := cmd.Flags().GetBool("yes") // err is nil; flag registered in init()
 	return exec.Run(resp, autoYes, dryRun, loadPolicyOverrides())
 }
 
@@ -127,7 +125,7 @@ func loadPolicyOverrides() *exec.PolicyOverrides {
 	}
 }
 
-func sendWithRetry(ctx context.Context, be backend.Backend, systemPrompt string, userMsg string) (*response.LLMResponse, error) {
+func sendWithRetry(ctx context.Context, be backend.Backend, systemPrompt string, userMsg string) (*response.Result, error) {
 	// Start spinner.
 	spin := display.NewSpinner()
 	spin.Start("Thinking...")
@@ -197,7 +195,7 @@ func sendWithRetry(ctx context.Context, be backend.Backend, systemPrompt string,
 }
 
 func resolveBackend(cmd *cobra.Command) (backend.Backend, error) {
-	backendName, _ := cmd.Flags().GetString("backend")
+	backendName, _ := cmd.Flags().GetString("backend") // err is nil; flag registered in init()
 
 	// If not specified via flag, check config.
 	if backendName == "" {
@@ -267,17 +265,20 @@ func initializeConfig(cmd *cobra.Command) error {
 		viper.SetConfigType("yaml")
 	}
 
-	if err := viper.ReadInConfig(); err != nil {
+	err := viper.ReadInConfig()
+	if err != nil {
 		var configFileNotFoundError viper.ConfigFileNotFoundError
 		if !errors.As(err, &configFileNotFoundError) {
 			return err
 		}
-	} else {
-		// Config file loaded — check permissions.
-		cfgPath := viper.ConfigFileUsed()
-		if warning := checkConfigPermissions(cfgPath); warning != "" {
-			fmt.Fprintln(os.Stderr, "warning:", warning)
-		}
+
+		return viper.BindPFlags(cmd.Flags())
+	}
+
+	// Config file loaded — check permissions.
+	cfgPath := viper.ConfigFileUsed()
+	if warning := checkConfigPermissions(cfgPath); warning != "" {
+		fmt.Fprintln(os.Stderr, "warning:", warning)
 	}
 
 	return viper.BindPFlags(cmd.Flags())

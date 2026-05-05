@@ -15,39 +15,46 @@ func TestNew_AllSpecTypes(t *testing.T) {
 		errMsg  string
 	}{
 		{
-			"stdout",
-			Config{Type: "stdout"},
-			false, "",
+			name:    "stdout",
+			cfg:     Config{Type: "stdout"},
+			wantErr: false,
+			errMsg:  "",
 		},
 		{
-			"claude with key",
-			Config{Type: "claude", APIKey: "sk-test"},
-			false, "",
+			name:    "claude with key",
+			cfg:     Config{Type: "claude", APIKey: "sk-test"},
+			wantErr: false,
+			errMsg:  "",
 		},
 		{
-			"claude without key",
-			Config{Type: "claude"},
-			true, "requires an API key",
+			name:    "claude without key",
+			cfg:     Config{Type: "claude"},
+			wantErr: true,
+			errMsg:  "requires an API key",
 		},
 		{
-			"openai should not be unknown",
-			Config{Type: "openai"},
-			true, "not yet implemented", // should be a friendly "not implemented" not "unknown"
+			name:    "openai should not be unknown",
+			cfg:     Config{Type: "openai"},
+			wantErr: true,
+			errMsg:  "not yet implemented", // should be a friendly "not implemented" not "unknown"
 		},
 		{
-			"local should not be unknown",
-			Config{Type: "local"},
-			true, "not yet implemented",
+			name:    "local should not be unknown",
+			cfg:     Config{Type: "local"},
+			wantErr: true,
+			errMsg:  "not yet implemented",
 		},
 		{
-			"http should not be unknown",
-			Config{Type: "http"},
-			true, "not yet implemented",
+			name:    "http should not be unknown",
+			cfg:     Config{Type: "http"},
+			wantErr: true,
+			errMsg:  "not yet implemented",
 		},
 		{
-			"truly unknown type",
-			Config{Type: "foobar"},
-			true, "unknown backend type",
+			name:    "truly unknown type",
+			cfg:     Config{Type: "foobar"},
+			wantErr: true,
+			errMsg:  "unknown backend type",
 		},
 	}
 
@@ -58,7 +65,7 @@ func TestNew_AllSpecTypes(t *testing.T) {
 				if err == nil {
 					t.Fatalf("New(%+v) should return error", tt.cfg)
 				}
-				if tt.errMsg != "" && !containsStr(err.Error(), tt.errMsg) {
+				if tt.errMsg != "" && !strings.Contains(err.Error(), tt.errMsg) {
 					t.Errorf("error %q should contain %q", err.Error(), tt.errMsg)
 				}
 			} else {
@@ -68,19 +75,6 @@ func TestNew_AllSpecTypes(t *testing.T) {
 			}
 		})
 	}
-}
-
-func containsStr(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsSubstr(s, substr))
-}
-
-func containsSubstr(s, sub string) bool {
-	for i := 0; i <= len(s)-len(sub); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
 }
 
 // --- Claude SSE streaming ---

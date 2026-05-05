@@ -10,7 +10,7 @@ func TestParse_ValidJSON(t *testing.T) {
 	tests := []struct {
 		name string
 		raw  string
-		want ResponseType
+		want Kind
 	}{
 		{
 			"command",

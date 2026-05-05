@@ -13,17 +13,17 @@ import (
 
 // Run executes or displays the model's response according to the execution policy.
 // overrides may be nil; when set, deny/auto_run/confirm patterns from config take precedence.
-func Run(resp *response.LLMResponse, autoYes bool, dryRun bool, overrides *PolicyOverrides) error {
+func Run(resp *response.Result, autoYes bool, dryRun bool, overrides *PolicyOverrides) error {
 	switch resp.Type {
 	case response.Explanation:
 		display.ShowExplanation(resp.Explanation)
 		return nil
 
 	case response.Command:
-		return runCommand(resp.CommandStr, resp.Explanation, autoYes, dryRun, overrides)
+		return runCommand(resp.Command, resp.Explanation, autoYes, dryRun, overrides)
 
 	case response.Script:
-		return runScript(resp.ScriptStr, resp.Explanation, autoYes, dryRun)
+		return runScript(resp.Script, resp.Explanation, autoYes, dryRun)
 
 	default:
 		return fmt.Errorf("unknown response type: %q", resp.Type)
@@ -70,20 +70,12 @@ func runScript(script string, explanation string, autoYes bool, dryRun bool) err
 		return nil
 	}
 
-	risk := Dangerous // Scripts are always at least confirm-level.
+	// Scripts are always treated as dangerous because they hide multiple operations.
 	if !autoYes {
-		switch risk {
-		case Confirm:
-			if !promptUser("Execute this script? [y/N] ") {
-				fmt.Fprintln(os.Stderr, "Cancelled.")
-				return nil
-			}
-		case Dangerous:
-			display.ShowError("Review the script above carefully.")
-			if !promptUser("Execute? [y/N] ") {
-				fmt.Fprintln(os.Stderr, "Cancelled.")
-				return nil
-			}
+		display.ShowError("Review the script above carefully.")
+		if !promptUser("Execute? [y/N] ") {
+			fmt.Fprintln(os.Stderr, "Cancelled.")
+			return nil
 		}
 	}
 

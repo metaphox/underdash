@@ -1,4 +1,5 @@
-package context
+// Package sysinfo gathers local system context for prompt construction.
+package sysinfo
 
 import (
 	"bufio"
@@ -201,8 +202,8 @@ func historySource(shell string) (string, func(string) string) {
 }
 
 var projectMarkers = []struct {
-	file       string
-	projectTyp string
+	file        string
+	projectType string
 }{
 	{"go.mod", "go"},
 	{"package.json", "node"},
@@ -217,7 +218,7 @@ func (c *SystemContext) gatherProjectType() {
 	for _, m := range projectMarkers {
 		p := filepath.Join(".", m.file)
 		if _, err := os.Stat(p); err == nil {
-			c.ProjectType = m.projectTyp
+			c.ProjectType = m.projectType
 			c.ProjectFile = m.file
 			return
 		}

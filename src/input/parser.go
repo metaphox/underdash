@@ -1,3 +1,4 @@
+// Package input parses user input from CLI arguments and stdin.
 package input
 
 import "strings"

@@ -1,3 +1,4 @@
+// Package response parses and validates structured LLM responses.
 package response
 
 import (
@@ -6,26 +7,26 @@ import (
 	"strings"
 )
 
-// ResponseType is the kind of response the model returned.
-type ResponseType string
+// Kind is the kind of response the model returned.
+type Kind string
 
 const (
-	Command     ResponseType = "command"
-	Explanation ResponseType = "explanation"
-	Script      ResponseType = "script"
+	Command     Kind = "command"
+	Explanation Kind = "explanation"
+	Script      Kind = "script"
 )
 
-// LLMResponse is the parsed JSON response from the model.
-type LLMResponse struct {
-	Type        ResponseType `json:"type"`
-	CommandStr  string       `json:"command,omitempty"`
-	Explanation string       `json:"explanation,omitempty"`
-	ScriptStr   string       `json:"script,omitempty"`
+// Result is the parsed JSON response from the model.
+type Result struct {
+	Type        Kind   `json:"type"`
+	Command     string `json:"command,omitempty"`
+	Explanation string `json:"explanation,omitempty"`
+	Script      string `json:"script,omitempty"`
 }
 
-// Parse attempts to extract a valid LLMResponse from raw model output.
+// Parse attempts to extract a valid Result from raw model output.
 // The response must be a raw JSON object — no prose wrapping, no code fences.
-func Parse(raw string) (*LLMResponse, error) {
+func Parse(raw string) (*Result, error) {
 	raw = strings.TrimSpace(raw)
 
 	if !strings.HasPrefix(raw, "{") {
@@ -41,18 +42,18 @@ func Parse(raw string) (*LLMResponse, error) {
 	return nil, fmt.Errorf("invalid JSON response: %w", err)
 }
 
-func tryUnmarshal(s string) (*LLMResponse, error) {
-	var resp LLMResponse
+func tryUnmarshal(s string) (*Result, error) {
+	var resp Result
 	if err := json.Unmarshal([]byte(s), &resp); err != nil {
 		return nil, err
 	}
 	return validate(&resp)
 }
 
-func validate(resp *LLMResponse) (*LLMResponse, error) {
+func validate(resp *Result) (*Result, error) {
 	switch resp.Type {
 	case Command:
-		if resp.CommandStr == "" {
+		if resp.Command == "" {
 			return nil, fmt.Errorf("type is %q but command field is empty", resp.Type)
 		}
 	case Explanation:
@@ -60,10 +61,10 @@ func validate(resp *LLMResponse) (*LLMResponse, error) {
 			return nil, fmt.Errorf("type is %q but explanation field is empty", resp.Type)
 		}
 	case Script:
-		if resp.ScriptStr == "" {
+		if resp.Script == "" {
 			return nil, fmt.Errorf("type is %q but script field is empty", resp.Type)
 		}
-		if !strings.HasPrefix(strings.TrimLeft(resp.ScriptStr, " \t\r\n"), "#!") {
+		if !strings.HasPrefix(strings.TrimLeft(resp.Script, " \t\r\n"), "#!") {
 			return nil, fmt.Errorf("type is %q but script does not start with a shebang", resp.Type)
 		}
 	case "":

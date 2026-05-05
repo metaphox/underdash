@@ -1,3 +1,4 @@
+// Package backend provides LLM backend implementations.
 package backend
 
 import (

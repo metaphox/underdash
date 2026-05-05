@@ -36,7 +36,7 @@ func loadDotEnvFrom(path string) {
 		if _, exists := os.LookupEnv(key); exists {
 			continue
 		}
-		_ = os.Setenv(key, value)
+		_ = os.Setenv(key, value) // only fails for an invalid key, which parseDotEnvLine rejects
 	}
 }
 
