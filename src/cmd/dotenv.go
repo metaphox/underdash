@@ -25,7 +25,7 @@ func loadDotEnvFrom(path string) {
 	if err != nil {
 		return
 	}
-	defer f.Close()
+	defer f.Close() //nolint:errcheck // read-only file, close error is harmless //nolint:errcheck // read-only file, close error is harmless
 
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {

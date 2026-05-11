@@ -163,7 +163,7 @@ func (c *SystemContext) gatherShellHistory() {
 	if err != nil {
 		return
 	}
-	defer f.Close()
+	defer f.Close() //nolint:errcheck // read-only file, close error is harmless
 
 	var lines []string
 	scanner := bufio.NewScanner(f)

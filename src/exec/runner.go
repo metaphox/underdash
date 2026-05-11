@@ -84,13 +84,13 @@ func runScript(script string, explanation string, autoYes bool, dryRun bool) err
 	if err != nil {
 		return fmt.Errorf("create temp script: %w", err)
 	}
-	defer os.Remove(tmp.Name())
+	defer os.Remove(tmp.Name()) //nolint:errcheck // best-effort cleanup of temp file
 
 	if _, err := tmp.WriteString(script); err != nil {
-		tmp.Close()
+		_ = tmp.Close() // close before returning error
 		return fmt.Errorf("write temp script: %w", err)
 	}
-	tmp.Close()
+	_ = tmp.Close() // done writing; error would surface on re-read
 
 	if err := os.Chmod(tmp.Name(), 0700); err != nil {
 		return fmt.Errorf("chmod temp script: %w", err)

@@ -1,0 +1,71 @@
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - errorlint
+    - govet
+    - ineffassign
+    - revive
+    - staticcheck
+    - unconvert
+  settings:
+    revive:
+      rules:
+        # style-decisions.md §Package comments
+        - name: package-comments
+          severity: warning
+        # style-decisions.md §Doc comments — exported symbols need docs
+        - name: exported
+          severity: warning
+          arguments:
+            - "checkPrivateReceivers"
+            - "sayRepetitiveInsteadOfStutters"
+        # style-decisions.md §Variable names — receiver naming
+        - name: receiver-naming
+          severity: warning
+        # style-decisions.md §Package vs. exported symbol name
+        - name: unexported-return
+          severity: warning
+        # best-practices.md — blank imports only in main or test
+        - name: blank-imports
+          severity: warning
+        # style-guide.md — context.Context as first param
+        - name: context-as-argument
+          severity: warning
+        # style-decisions.md — error return is last
+        - name: error-return
+          severity: warning
+        # style-decisions.md §Indent error flow
+        - name: superfluous-else
+          severity: warning
+        # style-decisions.md — don't use dot imports
+        - name: dot-imports
+          severity: error
+    staticcheck:
+      checks:
+        - "all"
+        # ST1003: naming conventions (MixedCaps, initialisms)
+        # ST1000: package comments
+        # ST1020/ST1021/ST1022: doc comment form
+    errorlint:
+      # style-decisions.md §Handle errors — use errors.Is/As
+      errorf: true
+      asserts: true
+      comparison: true
+  exclusions:
+    rules:
+      # Test files: relax doc-comment requirements
+      - path: _test\.go
+        linters:
+          - revive
+        text: "exported"
+      # Test files: allow unchecked errors (common in test helpers)
+      - path: _test\.go
+        linters:
+          - errcheck
+
+formatters:
+  enable:
+    - gofmt

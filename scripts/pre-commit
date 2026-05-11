@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+#
+# Pre-commit hook: runs golangci-lint on staged Go files.
+# Install via: make install-hooks
+
+set -euo pipefail
+
+# Check that golangci-lint is available.
+if ! command -v golangci-lint &>/dev/null; then
+    echo "ERROR: golangci-lint is not installed."
+    echo ""
+    echo "Install it with:"
+    echo "  brew install golangci-lint"
+    echo ""
+    echo "Or see: https://golangci-lint.run/welcome/install/"
+    exit 1
+fi
+
+# Collect staged .go files under src/.
+STAGED_GO_FILES=$(git diff --cached --name-only --diff-filter=ACM -- 'src/*.go' 'src/**/*.go')
+
+if [ -z "$STAGED_GO_FILES" ]; then
+    # No Go files staged — nothing to lint.
+    exit 0
+fi
+
+echo "Running golangci-lint on staged Go files..."
+
+# Run linter from src/ directory (where go.mod lives).
+cd src
+
+# golangci-lint operates on packages, so run on ./... and let the config handle scope.
+if ! golangci-lint run ./...; then
+    echo ""
+    echo "Commit blocked: fix the lint errors above."
+    echo "Run 'make lint' to check all issues."
+    exit 1
+fi
+
+echo "Lint passed."

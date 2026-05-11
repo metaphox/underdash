@@ -10,6 +10,7 @@ import (
 // Kind is the kind of response the model returned.
 type Kind string
 
+// Kind constants enumerate the possible response types from the model.
 const (
 	Command     Kind = "command"
 	Explanation Kind = "explanation"
