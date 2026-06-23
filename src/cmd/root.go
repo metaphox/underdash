@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 
 	"metaphox/underdash/backend"
@@ -41,19 +42,135 @@ var (
 
 // Execute runs the root command and exits the process on error.
 func Execute() {
+	rootCmd.SetArgs(normalizeLeadingArgs(rootCmd.Flags(), os.Args[1:]))
 	if err := rootCmd.Execute(); err != nil {
-		display.ShowError(err.Error())
+		if msg, ok := flagErrorHint(err); ok {
+			display.ShowError(msg)
+		} else {
+			display.ShowError(err.Error())
+		}
 		os.Exit(1)
 	}
 }
 
+// flagErrorHint turns pflag's terse "unknown flag" errors into actionable
+// guidance, since a prompt CLI user may have meant the token as prompt text.
+// Handles both long ("unknown flag: --foo") and shorthand
+// ("unknown shorthand flag: 'x' in -x") forms. Returns (message, true) when err
+// is an unknown-flag error, else ("", false).
+func flagErrorHint(err error) (string, bool) {
+	msg := err.Error()
+
+	// Extract the offending token ("--foo" or "-x") from either error form.
+	var token string
+	switch {
+	case strings.HasPrefix(msg, "unknown flag: "):
+		token = strings.TrimPrefix(msg, "unknown flag: ")
+	case strings.HasPrefix(msg, "unknown shorthand flag: "):
+		// e.g. "unknown shorthand flag: 'x' in -xyz" — take what follows " in ".
+		if i := strings.LastIndex(msg, " in "); i >= 0 {
+			token = msg[i+len(" in "):]
+		}
+	default:
+		return "", false
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s\n\n", msg)
+	fmt.Fprintf(&b, "If you meant a flag, check the spelling (see _ --help for the list).\n")
+
+	switch {
+	case strings.HasPrefix(token, "--"):
+		// "--these are prompts" was likely meant as "-- these are prompts".
+		rest := strings.TrimPrefix(token, "--")
+		fmt.Fprintf(&b, "If %q is prompt text, put a space after -- so the rest is taken literally:\n", token)
+		fmt.Fprintf(&b, "    _ -- %s ...", rest)
+	case strings.HasPrefix(token, "-"):
+		// Shorthand: prefix the whole prompt with -- to keep it literal.
+		fmt.Fprintf(&b, "If %q is prompt text, prefix the prompt with -- so it is taken literally:\n", token)
+		fmt.Fprintf(&b, "    _ -- %s ...", token)
+	}
+	return b.String(), true
+}
+
+// normalizeLeadingArgs makes a leading "-<digit>" token (e.g. "-1") be taken as
+// prompt text rather than rejected as an unknown shorthand flag, since a pflag
+// shorthand is always a letter — "-1" can never be a valid flag. It inserts a
+// "--" separator before the first such token, skipping any leading boolean
+// flags so combinations like "-n -1 times" still work. Everything else (a
+// bareword, a value-taking flag, or an unknown letter-shorthand like "-x") is
+// left for pflag to handle.
+func normalizeLeadingArgs(flags *pflag.FlagSet, args []string) []string {
+	for i, a := range args {
+		switch {
+		case a == "--":
+			return args // user was already explicit
+		case startsWithDashDigit(a):
+			out := make([]string, 0, len(args)+1)
+			out = append(out, args[:i]...)
+			out = append(out, "--")
+			out = append(out, args[i:]...)
+			return out
+		case strings.HasPrefix(a, "-") && isBoolFlag(flags, a):
+			continue // skip leading boolean flag, keep scanning
+		default:
+			return args // bareword, value-flag, or unknown — let pflag decide
+		}
+	}
+	return args
+}
+
+// startsWithDashDigit reports whether token is a single dash followed by a
+// digit (e.g. "-1", "-1.5", "-3x"), which can never be a valid pflag shorthand.
+func startsWithDashDigit(token string) bool {
+	return len(token) >= 2 && token[0] == '-' && token[1] >= '0' && token[1] <= '9'
+}
+
+// isBoolFlag reports whether token refers only to boolean flags, which never
+// consume a following argument. Handles long ("--dry-run") and single or
+// combined shorthand ("-n", "-ny") forms.
+func isBoolFlag(flags *pflag.FlagSet, token string) bool {
+	if strings.HasPrefix(token, "--") {
+		name := strings.SplitN(strings.TrimPrefix(token, "--"), "=", 2)[0]
+		f := flags.Lookup(name)
+		return f != nil && f.Value.Type() == "bool"
+	}
+	// Single-dash; an "=" form (e.g. "-n=false") may consume a value, so skip it.
+	if strings.Contains(token, "=") {
+		return false
+	}
+	chars := strings.TrimPrefix(token, "-")
+	if chars == "" {
+		return false
+	}
+	for _, c := range chars {
+		f := flags.ShorthandLookup(string(c))
+		if f == nil || f.Value.Type() != "bool" {
+			return false
+		}
+	}
+	return true
+}
+
 func init() {
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default: $HOME/.config/underdash/config.yaml)")
-	rootCmd.Flags().StringP("backend", "b", "", "backend to use (default from config)")
-	rootCmd.Flags().BoolP("dry-run", "n", false, "show the generated command without executing")
-	rootCmd.Flags().Bool("no-exec", false, "alias for --dry-run")
-	rootCmd.Flags().BoolP("yes", "y", false, "skip all confirmations")
-	rootCmd.Flags().String("output", "", "output mode: streaming or plain (default: streaming)")
+	registerRootFlags(rootCmd)
+}
+
+// registerRootFlags declares the prompt-command flags. Extracted so tests can
+// build a faithful copy of the command's parsing behavior.
+func registerRootFlags(cmd *cobra.Command) {
+	cmd.Flags().StringP("backend", "b", "", "backend to use (default from config)")
+	cmd.Flags().BoolP("dry-run", "n", false, "show the generated command without executing")
+	cmd.Flags().Bool("no-exec", false, "alias for --dry-run")
+	cmd.Flags().BoolP("yes", "y", false, "skip all confirmations")
+	cmd.Flags().String("output", "", "output mode: streaming or plain (default: streaming)")
+
+	// Stop parsing flags once the first bareword (the start of the prompt) is
+	// seen, so flags only count before the prompt. A standalone "--" still
+	// forces everything after it into the prompt verbatim (pflag built-in),
+	// letting users write prompts that start with a dash.
+	cmd.Flags().SetInterspersed(false)
 }
 
 func runRoot(cmd *cobra.Command, args []string) error {

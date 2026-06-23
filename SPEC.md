@@ -21,7 +21,7 @@ Backend abstraction: the prepared prompt can be send to a abstracted backend whi
 Underdash is designed to be a shell assistant for one-shot tasks. This means each execution should try to limit the number of requests to a minimum, but not necessarily only one, during one invocation. Invocations are "stateless", so there is no built-in concept of sessions or context management between each invocation.
 
 ### Tool Hints
-Underdash should support both implicit and explict tool hints.
+Underdash infers the tools to call from the natural-language input.
 
 #### Implicit: no indicator.
 
@@ -29,16 +29,10 @@ Examples:
 - `_ curl endpoint with bearer token $TOKEN`: should generate a command to call `curl`.
 - `_ show large files`: it does not specify which tool to use or how many files should be shown, so the response should be an educated guess with reasonable assumptions, calling a tool / a combination of tools / a one-off script that shows the large files under cwd.
 
-
-#### Explicit hints - "this is important":
-`:` marks the tool(s) to be called. Examples:
-- `_ :curl endpoint url with bearer token $TOKEN`: `curl` is the tool to call.
-- `_ :curl endpoint url with bearer token $TOKEN then :sort the result`: `curl` and `sort` are the tools to call.
-
-#### Explicit hints - "these are just prompt":
+#### Prompt-only marker - "these are just prompt":
 `--` indicates all following words are just prompt. Examples:
 - `_ --curl failed when getting endpoint, try something else`: Explicitly notify Underdash that *no* words after `--` should be treated as any tools to call.
-- `_ :echo "text" prints "text" followed by a newline -- how to make echo print no new line?`: Explicitly notify Underdash that `echo` is the tool to call, and all words come after `--` should be treated as a supplementary prompt.
+- `_ echo "text" prints "text" followed by a newline -- how to make echo print no new line?`: All words after `--` are treated as a supplementary prompt.
 
 
 ### Non-LLM Inference layer
@@ -258,11 +252,11 @@ remote: {{.GitRemote}}
 **Notes on context assembly:**
 - XML-style tags are used as structured delimiters (not actual XML — no need to escape content).
 - Sections are omitted entirely when not available (e.g., no `<git>` block outside a repo).
-- `<tool_hints>` is populated from the parser: explicit `:tool` names become "The user wants to use: curl, sort." The `--` separator becomes "Everything after the marker is supplementary context, not a tool request."
+- `<tool_hints>` is populated from the parser: the `--` separator becomes "Everything after the marker is supplementary context, not a tool request."
 
 #### User Message
 
-The user's original natural-language input, verbatim (after stripping `:` and `--` syntax markers that have already been extracted into tool hints).
+The user's original natural-language input, verbatim (after stripping the `--` syntax marker that has already been extracted into tool hints).
 
 ```
 {{.UserInput}}

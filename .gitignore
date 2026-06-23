@@ -19,3 +19,4 @@
 src/underdash
 .env
 underdash
+.DS_Store
