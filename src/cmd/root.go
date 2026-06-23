@@ -220,8 +220,9 @@ func runRoot(cmd *cobra.Command, args []string) error {
 	noExec, _ := cmd.Flags().GetBool("no-exec") // err is nil; flag registered in init()
 	dryRun = dryRun || noExec
 
-	// 1. Parse input.
-	inp := input.Parse(args)
+	// 1. Parse input. ArgsLenAtDash() locates a "--" the flag parser consumed;
+	// input.Parse also handles a literal "--" left in args.
+	inp := input.Parse(args, cmd.ArgsLenAtDash())
 
 	// 2. Gather context.
 	sysCtx := sysinfo.Gather()

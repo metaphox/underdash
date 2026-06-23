@@ -19,35 +19,47 @@ type ParsedInput struct {
 //   - :word  → tool hint (the word after colon is a tool name)
 //   - --     → everything after this token is supplementary prompt
 //   - all other tokens form the natural-language query
-func Parse(args []string) *ParsedInput {
+//
+// dashPos is cobra's ArgsLenAtDash(): the index of a "--" that the flag parser
+// already consumed (>= 0), or -1 when none was consumed. Because flag
+// interspersing is disabled, a "--" that follows the first bareword is NOT
+// consumed by the parser and instead survives as a literal token in args — so
+// both signals are honored here.
+func Parse(args []string, dashPos int) *ParsedInput {
 	result := &ParsedInput{}
 
-	var queryParts []string
-	separatorSeen := false
+	queryArgs := args
+	var suppArgs []string
 
-	for _, arg := range args {
-		if separatorSeen {
-			// Everything after -- is supplementary prompt.
-			if result.SupplementaryPrompt != "" {
-				result.SupplementaryPrompt += " "
+	switch {
+	case dashPos >= 0 && dashPos <= len(args):
+		// The parser consumed a leading "--" and reported its position.
+		queryArgs = args[:dashPos]
+		suppArgs = args[dashPos:]
+	default:
+		// The parser left a literal "--" in args (separator after the first
+		// bareword). Split on the first one and drop it.
+		for i, a := range args {
+			if a == "--" {
+				queryArgs = args[:i]
+				suppArgs = args[i+1:]
+				break
 			}
-			result.SupplementaryPrompt += arg
-			continue
 		}
+	}
 
-		if arg == "--" {
-			separatorSeen = true
-			continue
-		}
-
+	var queryParts []string
+	for _, arg := range queryArgs {
+		// Tool hints are only extracted from the query portion; text after the
+		// separator is pure prompt, not a tool request.
 		if strings.HasPrefix(arg, ":") && len(arg) > 1 {
 			result.ToolHints = append(result.ToolHints, arg[1:])
 			continue
 		}
-
 		queryParts = append(queryParts, arg)
 	}
 
 	result.Query = strings.Join(queryParts, " ")
+	result.SupplementaryPrompt = strings.Join(suppArgs, " ")
 	return result
 }

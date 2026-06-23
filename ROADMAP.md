@@ -27,14 +27,13 @@ old `TODO.md` (spec-gap checklist). Milestones are ordered; M1 items are release
 
 ## M1 — Correctness & safety (release blockers)
 
-- [ ] **Reconcile the `--` semantic split.** SPEC `§Tool Hints` defines `--` as "everything
-  after is supplementary prompt, **not** a tool request," and `input/parser.go` +
-  `prompt.BuildUserMessage` implement a `Query` vs `SupplementaryPrompt` distinction. But
-  pflag strips the first `--` before `runRoot` receives `args`, so `input.Parse` never sees
-  the marker and `SupplementaryPrompt` is permanently empty (dead code). **Fix:** in
-  `runRoot`, recover the split with `cmd.ArgsLenAtDash()` before calling `input.Parse`, *or*
-  decide the Query/Supplementary distinction isn't worth keeping and delete the unreachable
-  machinery. (The pflag-layer `--` work is done; this is the layer above it.)
+- [x] **Reconcile the `--` semantic split.** SPEC `§Tool Hints` defines `--` as "everything
+  after is supplementary prompt, **not** a tool request." Done: `runRoot` now passes
+  `cmd.ArgsLenAtDash()` into `input.Parse`, which honors both a parser-consumed front `--`
+  and a literal `--` left in args after the first bareword (needed because flag interspersing
+  is disabled). `BuildUserMessage` collapses to a single block when only one side is present.
+  Covered by `input/parser_test.go` and `prompt/prompt_test.go`, verified end-to-end via the
+  `stdout` backend.
 
 - [ ] **Backend timeout + cancellation.** `backend/claude.go` uses `http.DefaultClient` (no
   timeout) and `main.go` has no signal handling, so a hung backend hangs forever and Ctrl+C

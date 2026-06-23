@@ -127,12 +127,17 @@ func BuildContextBlock(ctx *sysinfo.SystemContext, inp *input.ParsedInput) strin
 }
 
 // BuildUserMessage returns the user-facing message to send to the backend.
+// When only one of query / supplementary text is present (e.g. a prompt that is
+// entirely after "--"), it is returned on its own without the framing label.
 func BuildUserMessage(inp *input.ParsedInput) string {
-	msg := inp.Query
-	if inp.SupplementaryPrompt != "" {
-		msg += "\n\nAdditional context: " + inp.SupplementaryPrompt
+	switch {
+	case inp.Query == "":
+		return inp.SupplementaryPrompt
+	case inp.SupplementaryPrompt == "":
+		return inp.Query
+	default:
+		return inp.Query + "\n\nAdditional context: " + inp.SupplementaryPrompt
 	}
-	return msg
 }
 
 // formatSize renders a byte count in a compact human-readable form.
