@@ -44,13 +44,41 @@ var (
 func Execute() {
 	rootCmd.SetArgs(normalizeLeadingArgs(rootCmd.Flags(), os.Args[1:]))
 	if err := rootCmd.Execute(); err != nil {
-		if msg, ok := flagErrorHint(err); ok {
-			display.ShowError(msg)
-		} else {
-			display.ShowError(err.Error())
-		}
+		renderError(err)
 		os.Exit(1)
 	}
+}
+
+// renderError pretty-prints an error to stderr, recognizing flag-usage errors
+// and structured backend.APIError values; anything else prints as a plain
+// "error: <msg>" line.
+func renderError(err error) {
+	if msg, ok := flagErrorHint(err); ok {
+		display.ShowError(msg)
+		return
+	}
+
+	var apiErr *backend.APIError
+	if errors.As(err, &apiErr) {
+		summary := fmt.Sprintf("%s (%s)", apiErr.Summary(), apiErr.Backend)
+		if apiErr.StatusCode != 0 {
+			summary = fmt.Sprintf("%s (%s, HTTP %d)", apiErr.Summary(), apiErr.Backend, apiErr.StatusCode)
+		}
+		var details []string
+		if apiErr.Message != "" {
+			details = append(details, apiErr.Message)
+		}
+		if apiErr.RequestID != "" {
+			details = append(details, "request id: "+apiErr.RequestID)
+		}
+		if h := apiErr.Hint(); h != "" {
+			details = append(details, "hint: "+h)
+		}
+		display.ShowErrorDetails(summary, details)
+		return
+	}
+
+	display.ShowError(err.Error())
 }
 
 // flagErrorHint turns pflag's terse "unknown flag" errors into actionable

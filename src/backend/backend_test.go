@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -101,7 +102,7 @@ func TestReadClaudeStream_ConcatenatesTextDeltas(t *testing.T) {
 		``,
 	}, "\n")
 
-	got, err := readClaudeStream(strings.NewReader(stream))
+	got, err := readClaudeStream(strings.NewReader(stream), "claude")
 	if err != nil {
 		t.Fatalf("readClaudeStream: %v", err)
 	}
@@ -113,18 +114,22 @@ func TestReadClaudeStream_ConcatenatesTextDeltas(t *testing.T) {
 
 func TestReadClaudeStream_PropagatesErrorEvent(t *testing.T) {
 	stream := "data: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"servers busy\"}}\n\n"
-	_, err := readClaudeStream(strings.NewReader(stream))
+	_, err := readClaudeStream(strings.NewReader(stream), "claude")
 	if err == nil {
 		t.Fatal("expected error from error event")
 	}
-	if !strings.Contains(err.Error(), "overloaded_error") || !strings.Contains(err.Error(), "servers busy") {
-		t.Errorf("error should surface event details, got: %v", err)
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("expected *APIError, got %T: %v", err, err)
+	}
+	if apiErr.Type != "overloaded_error" || apiErr.Message != "servers busy" {
+		t.Errorf("error should surface event details, got Type=%q Message=%q", apiErr.Type, apiErr.Message)
 	}
 }
 
 func TestReadClaudeStream_EmptyIsError(t *testing.T) {
 	stream := "event: message_start\ndata: {\"type\":\"message_start\"}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
-	_, err := readClaudeStream(strings.NewReader(stream))
+	_, err := readClaudeStream(strings.NewReader(stream), "claude")
 	if err == nil {
 		t.Fatal("expected error when no text deltas were received")
 	}

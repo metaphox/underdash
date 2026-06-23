@@ -127,6 +127,19 @@ func ShowError(msg string) {
 	}
 }
 
+// ShowErrorDetails prints a red "error:" summary followed by indented detail
+// lines (dimmed in TTY mode), e.g. the provider message, request id, and a hint.
+func ShowErrorDetails(summary string, details []string) {
+	ShowError(summary)
+	for _, d := range details {
+		if IsPlainMode() {
+			fmt.Fprintf(os.Stderr, "  %s\n", d)
+		} else {
+			fmt.Fprintf(os.Stderr, "  \033[2m%s\033[0m\n", d)
+		}
+	}
+}
+
 // ShowDryRun prints the generated command/explanation/script without executing.
 func ShowDryRun(systemPrompt string, userMessage string) {
 	fmt.Println("=== DRY RUN ===")

@@ -93,22 +93,15 @@ func (c *ClaudeBackend) Send(ctx context.Context, req Request) (string, error) {
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		switch resp.StatusCode {
-		case 401:
-			return "", fmt.Errorf("authentication failed: invalid API key")
-		case 429:
-			return "", fmt.Errorf("rate limited: too many requests")
-		default:
-			return "", fmt.Errorf("API error (HTTP %d): %s", resp.StatusCode, string(respBody))
-		}
+		return "", parseAPIError(c.Name(), resp.StatusCode, respBody)
 	}
 
-	return readClaudeStream(resp.Body)
+	return readClaudeStream(resp.Body, c.Name())
 }
 
 // readClaudeStream consumes an Anthropic Messages SSE stream and returns the
 // concatenated text from all `content_block_delta` text deltas.
-func readClaudeStream(r io.Reader) (string, error) {
+func readClaudeStream(r io.Reader, backendName string) (string, error) {
 	var sb strings.Builder
 	scanner := bufio.NewScanner(r)
 	// SSE lines can be long; bump the buffer.
@@ -130,7 +123,11 @@ func readClaudeStream(r io.Reader) (string, error) {
 			continue
 		}
 		if ev.Error != nil {
-			return "", fmt.Errorf("API error: %s: %s", ev.Error.Type, ev.Error.Message)
+			return "", &APIError{
+				Backend: backendName,
+				Type:    ev.Error.Type,
+				Message: ev.Error.Message,
+			}
 		}
 		if ev.Type == "content_block_delta" && ev.Delta.Type == "text_delta" {
 			sb.WriteString(ev.Delta.Text)
