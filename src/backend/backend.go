@@ -11,6 +11,20 @@ type Request struct {
 	SystemPrompt string
 	UserMessage  string
 	MaxTokens    int
+	// Attachments are local files the user referenced with @path tokens,
+	// already validated and encoded. Backends that support multimodal content
+	// render these as content blocks; others degrade or reject as appropriate.
+	Attachments []Attachment
+}
+
+// Attachment is a validated, encoded local file included in a Request.
+type Attachment struct {
+	Filename  string // base name, for display
+	Kind      string // "image", "document", or "text"
+	MediaType string // e.g. "image/png", "application/pdf", "text/plain"
+	// Data holds base64-encoded bytes for "image"/"document" kinds, or the raw
+	// UTF-8 contents for the "text" kind.
+	Data string
 }
 
 // Backend sends a prompt and returns the raw response text.

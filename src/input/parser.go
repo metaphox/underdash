@@ -1,7 +1,10 @@
 // Package input parses user input from CLI arguments and stdin.
 package input
 
-import "strings"
+import (
+	"os"
+	"strings"
+)
 
 // ParsedInput is the result of parsing the user's raw CLI arguments.
 type ParsedInput struct {
@@ -11,12 +14,16 @@ type ParsedInput struct {
 	ToolHints []string
 	// SupplementaryPrompt is text after the -- separator, treated as pure prompt.
 	SupplementaryPrompt string
+	// Attachments are local file paths referenced with @path tokens that
+	// resolved to existing files.
+	Attachments []string
 }
 
 // Parse splits raw CLI args into a structured request.
 //
 // Syntax:
 //   - :word  → tool hint (the word after colon is a tool name)
+//   - @path  → file attachment, but only when path resolves to a real file
 //   - --     → everything after this token is supplementary prompt
 //   - all other tokens form the natural-language query
 //
@@ -56,10 +63,25 @@ func Parse(args []string, dashPos int) *ParsedInput {
 			result.ToolHints = append(result.ToolHints, arg[1:])
 			continue
 		}
+		// An @path token is an attachment only when it points at a real file;
+		// otherwise (an @mention, an email) it stays verbatim in the query.
+		if strings.HasPrefix(arg, "@") && len(arg) > 1 {
+			if path := arg[1:]; isFile(path) {
+				result.Attachments = append(result.Attachments, path)
+				continue
+			}
+		}
 		queryParts = append(queryParts, arg)
 	}
 
 	result.Query = strings.Join(queryParts, " ")
 	result.SupplementaryPrompt = strings.Join(suppArgs, " ")
 	return result
+}
+
+// isFile reports whether path refers to an existing regular file (not a
+// directory). Used to decide whether an @path token is an attachment.
+func isFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }

@@ -35,6 +35,46 @@ Examples:
 - `_ echo "text" prints "text" followed by a newline -- how to make echo print no new line?`: All words after `--` are treated as a supplementary prompt.
 
 
+### File Attachments
+
+A query token of the form `@<path>` attaches a local file to the request so the
+model can see its contents (e.g. `_ explain this error @screenshot.png`,
+`_ summarize @report.pdf`). Attachment handling is deliberate and guarded:
+
+- **Recognition.** A token is treated as an attachment only when it begins with
+  `@` *and* the remainder resolves to an existing readable file. Tokens that look
+  like `@`-references but do not point at a file (an `@mention`, an email address)
+  are left verbatim in the query, so ordinary prompts are never broken.
+- **Type guard.** The file type is detected by extension first, then by content
+  sniffing. Only an allowlist is accepted: images (`png`, `jpeg`, `gif`, `webp`),
+  PDF documents, and UTF-8 text files. Anything else is rejected with a clear
+  error naming the file and detected type.
+- **Size guard.** Each file must be within a per-file byte cap (default 5 MiB,
+  configurable via `attach.max_bytes`) — kept well under the provider's
+  per-request limit. Oversized files are rejected.
+- **Encoding.** Binary files (images, PDFs) are MIME/base64-encoded; text files
+  are passed through as UTF-8. Validation and encoding happen locally, *before*
+  any backend call, so an unreadable, oversized, or unsupported file fails fast
+  without spending a request.
+
+Attachments are delivered as provider content blocks rather than inlined into the
+prompt text:
+
+- **`claude`** — full support: images and PDFs become base64 `image` / `document`
+  content blocks; text files become `text` documents. The encoded attachments are
+  placed before the user's instruction in the message content.
+- **`openai` / `local` / `http`** — images only, sent as base64 `image_url` data
+  URIs; text files are inlined into the message. PDF/document attachments are
+  rejected with a clear error, since the Chat Completions protocol cannot carry
+  them.
+- **`stdout`** — prints an attachment summary (name, kind, media type, size)
+  instead of transmitting anything, keeping the debug path informative.
+
+Attachments require a backend model with the matching capability (vision for
+images, document support for PDFs); when the configured model lacks it, the
+provider returns a clear error.
+
+
 ### Non-LLM Inference layer
 
 Based on a quick skim of user input, Underdash should inspect the system *conditionally*, for:
@@ -347,7 +387,7 @@ remote: {{.GitRemote}}
 
 #### User Message
 
-The user's original natural-language input, verbatim (after stripping the `--` syntax marker that has already been extracted into tool hints).
+The user's original natural-language input, verbatim (after stripping the `--` syntax marker that has already been extracted into tool hints, and any `@<path>` tokens that resolved to attachments).
 
 ```
 {{.UserInput}}

@@ -35,8 +35,48 @@ type openAIRequest struct {
 }
 
 type openAIMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role string `json:"role"`
+	// Content is either a plain string or a []openAIContentPart when image
+	// attachments are present.
+	Content any `json:"content"`
+}
+
+// openAIContentPart is one element of a multimodal message content array.
+type openAIContentPart struct {
+	Type     string          `json:"type"`                // "text" or "image_url"
+	Text     string          `json:"text,omitempty"`      // set for "text" parts
+	ImageURL *openAIImageURL `json:"image_url,omitempty"` // set for "image_url" parts
+}
+
+type openAIImageURL struct {
+	URL string `json:"url"` // a data: URI carrying base64 image bytes
+}
+
+// buildUserContent returns the user message content: a plain string when there
+// are no attachments, or a content-part array carrying image data URIs. Text
+// attachments are inlined ahead of the instruction; document/PDF attachments are
+// rejected, since the Chat Completions protocol cannot carry them.
+func (o *OpenAIBackend) buildUserContent(req Request) (any, error) {
+	if len(req.Attachments) == 0 {
+		return req.UserMessage, nil
+	}
+	parts := make([]openAIContentPart, 0, len(req.Attachments)+1)
+	var inlined strings.Builder
+	for _, a := range req.Attachments {
+		switch a.Kind {
+		case "image":
+			parts = append(parts, openAIContentPart{
+				Type:     "image_url",
+				ImageURL: &openAIImageURL{URL: "data:" + a.MediaType + ";base64," + a.Data},
+			})
+		case "text":
+			fmt.Fprintf(&inlined, "Contents of %s:\n%s\n\n", a.Filename, a.Data)
+		default: // "document" / PDF
+			return nil, fmt.Errorf("the %s backend does not support %s attachments (%s); only images and text files are supported", o.name, a.Kind, a.Filename)
+		}
+	}
+	parts = append(parts, openAIContentPart{Type: "text", Text: inlined.String() + req.UserMessage})
+	return parts, nil
 }
 
 // openAIStreamEvent is the subset of a Chat Completions stream chunk we read.
@@ -55,13 +95,18 @@ type openAIStreamEvent struct {
 // Send sends a request to an OpenAI-compatible endpoint and returns the raw
 // model response text.
 func (o *OpenAIBackend) Send(ctx context.Context, req Request) (string, error) {
+	userContent, err := o.buildUserContent(req)
+	if err != nil {
+		return "", err
+	}
+
 	body := openAIRequest{
 		Model:     o.Model,
 		MaxTokens: req.MaxTokens,
 		Stream:    true,
 		Messages: []openAIMessage{
 			{Role: "system", Content: req.SystemPrompt},
-			{Role: "user", Content: req.UserMessage},
+			{Role: "user", Content: userContent},
 		},
 	}
 

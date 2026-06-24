@@ -35,8 +35,55 @@ type claudeRequest struct {
 }
 
 type claudeMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role string `json:"role"`
+	// Content is either a plain string (text-only message) or a
+	// []claudeContentBlock when attachments are present.
+	Content any `json:"content"`
+}
+
+// claudeContentBlock is one element of a structured message content array.
+type claudeContentBlock struct {
+	Type   string             `json:"type"`             // "text", "image", or "document"
+	Text   string             `json:"text,omitempty"`   // set for "text" blocks
+	Source *claudeBlockSource `json:"source,omitempty"` // set for "image"/"document" blocks
+}
+
+// claudeBlockSource describes the data for an image or document block.
+type claudeBlockSource struct {
+	Type      string `json:"type"`       // "base64" or "text"
+	MediaType string `json:"media_type"` // e.g. "image/png", "application/pdf"
+	Data      string `json:"data"`       // base64 bytes, or raw text for a "text" source
+}
+
+// buildClaudeContent returns the message content: a plain string when there are
+// no attachments (unchanged behavior), or a content-block array that places the
+// encoded attachments before the user's instruction.
+func buildClaudeContent(req Request) any {
+	if len(req.Attachments) == 0 {
+		return req.UserMessage
+	}
+	blocks := make([]claudeContentBlock, 0, len(req.Attachments)+1)
+	for _, a := range req.Attachments {
+		switch a.Kind {
+		case "image":
+			blocks = append(blocks, claudeContentBlock{
+				Type:   "image",
+				Source: &claudeBlockSource{Type: "base64", MediaType: a.MediaType, Data: a.Data},
+			})
+		case "document":
+			blocks = append(blocks, claudeContentBlock{
+				Type:   "document",
+				Source: &claudeBlockSource{Type: "base64", MediaType: a.MediaType, Data: a.Data},
+			})
+		case "text":
+			blocks = append(blocks, claudeContentBlock{
+				Type:   "document",
+				Source: &claudeBlockSource{Type: "text", MediaType: "text/plain", Data: a.Data},
+			})
+		}
+	}
+	blocks = append(blocks, claudeContentBlock{Type: "text", Text: req.UserMessage})
+	return blocks
 }
 
 // claudeStreamEvent is the union of SSE event payloads we care about.
@@ -65,7 +112,7 @@ func (c *ClaudeBackend) Send(ctx context.Context, req Request) (string, error) {
 		MaxTokens: req.MaxTokens,
 		System:    req.SystemPrompt,
 		Messages: []claudeMessage{
-			{Role: "user", Content: req.UserMessage},
+			{Role: "user", Content: buildClaudeContent(req)},
 		},
 		Stream: true,
 	}

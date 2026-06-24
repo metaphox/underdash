@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 
+	"metaphox/underdash/attach"
 	"metaphox/underdash/audit"
 	"metaphox/underdash/backend"
 	"metaphox/underdash/display"
@@ -222,6 +223,7 @@ func registerRootFlags(cmd *cobra.Command) {
 	cmd.Flags().String("output", "", "output mode: streaming or plain (default: streaming)")
 	cmd.Flags().BoolP("verbose", "v", false, "print diagnostics to stderr")
 	cmd.Flags().Bool("version", false, "print version and data disclosure")
+	cmd.Flags().Bool("sysinfo", false, "print gathered system information (spec format) and exit")
 
 	// Stop parsing flags once the first bareword (the start of the prompt) is
 	// seen, so flags only count before the prompt. A standalone "--" still
@@ -239,6 +241,13 @@ func runRoot(cmd *cobra.Command, args []string) error {
 
 	if vb, _ := cmd.Flags().GetBool("verbose"); vb {
 		display.SetVerbose(true)
+	}
+
+	// --sysinfo prints the gathered context spec and exits, even with no prompt.
+	if si, _ := cmd.Flags().GetBool("sysinfo"); si {
+		sysCtx := sysinfo.Gather()
+		fmt.Println(prompt.BuildContextBlock(sysCtx, &input.ParsedInput{}))
+		return nil
 	}
 
 	if len(args) == 0 {
@@ -263,6 +272,16 @@ func runRoot(cmd *cobra.Command, args []string) error {
 	// 1. Parse input. ArgsLenAtDash() locates a "--" the flag parser consumed;
 	// input.Parse also handles a literal "--" left in args.
 	inp := input.Parse(args, cmd.ArgsLenAtDash())
+
+	// 1b. Load any @file attachments, failing fast (before any backend call) on
+	// unreadable, oversized, or unsupported files.
+	atts, err := attach.Load(inp.Attachments)
+	if err != nil {
+		return err
+	}
+	for _, a := range atts {
+		display.Verbosef("attachment: %s (%s, %s)", a.Filename, a.Kind, a.MediaType)
+	}
 
 	// 2. Gather context.
 	sysCtx := sysinfo.Gather()
@@ -291,11 +310,11 @@ func runRoot(cmd *cobra.Command, args []string) error {
 
 	// 5. Send to backend with retry loop, self-healing a retired model once.
 	start := time.Now()
-	resp, err := sendWithRetry(cmd.Context(), be, fullSystemPrompt, userMsg)
+	resp, err := sendWithRetry(cmd.Context(), be, fullSystemPrompt, userMsg, atts)
 	if err != nil {
 		if healedBe, healed := maybeSelfHeal(cmd.Context(), cmd, &cfg, be, err); healed {
 			be = healedBe
-			resp, err = sendWithRetry(cmd.Context(), be, fullSystemPrompt, userMsg)
+			resp, err = sendWithRetry(cmd.Context(), be, fullSystemPrompt, userMsg, atts)
 		}
 	}
 	elapsed := time.Since(start).Milliseconds()
@@ -360,7 +379,7 @@ func loadPolicyOverrides() *exec.PolicyOverrides {
 	}
 }
 
-func sendWithRetry(ctx context.Context, be backend.Backend, systemPrompt string, userMsg string) (*response.Result, error) {
+func sendWithRetry(ctx context.Context, be backend.Backend, systemPrompt string, userMsg string, atts []backend.Attachment) (*response.Result, error) {
 	// Start spinner.
 	spin := display.NewSpinner()
 	spin.Start("Thinking...")
@@ -369,6 +388,7 @@ func sendWithRetry(ctx context.Context, be backend.Backend, systemPrompt string,
 		SystemPrompt: systemPrompt,
 		UserMessage:  userMsg,
 		MaxTokens:    2048,
+		Attachments:  atts,
 	})
 	spin.Stop()
 
@@ -406,6 +426,7 @@ func sendWithRetry(ctx context.Context, be backend.Backend, systemPrompt string,
 			SystemPrompt: systemPrompt,
 			UserMessage:  combinedUserMsg,
 			MaxTokens:    2048,
+			Attachments:  atts,
 		})
 		spin.Stop()
 

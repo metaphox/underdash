@@ -1,6 +1,8 @@
 package input
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -63,4 +65,42 @@ func TestParse(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestParse_Attachments(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "diagram.png")
+	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("existing @file becomes an attachment and leaves the query", func(t *testing.T) {
+		got := Parse([]string{"explain", "@" + file, "please"}, -1)
+		if got.Query != "explain please" {
+			t.Errorf("Query = %q, want %q", got.Query, "explain please")
+		}
+		if len(got.Attachments) != 1 || got.Attachments[0] != file {
+			t.Errorf("Attachments = %v, want [%s]", got.Attachments, file)
+		}
+	})
+
+	t.Run("non-file @token stays verbatim in the query", func(t *testing.T) {
+		got := Parse([]string{"email", "@nobody.example", "now"}, -1)
+		if got.Query != "email @nobody.example now" {
+			t.Errorf("Query = %q, want %q", got.Query, "email @nobody.example now")
+		}
+		if len(got.Attachments) != 0 {
+			t.Errorf("Attachments = %v, want none", got.Attachments)
+		}
+	})
+
+	t.Run("@tokens after -- are pure prompt, not attachments", func(t *testing.T) {
+		got := Parse([]string{"run", "--", "@" + file}, -1)
+		if got.SupplementaryPrompt != "@"+file {
+			t.Errorf("SupplementaryPrompt = %q, want %q", got.SupplementaryPrompt, "@"+file)
+		}
+		if len(got.Attachments) != 0 {
+			t.Errorf("Attachments = %v, want none", got.Attachments)
+		}
+	})
 }

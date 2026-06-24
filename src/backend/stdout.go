@@ -19,5 +19,12 @@ func (s *StdoutBackend) Send(_ context.Context, req Request) (string, error) {
 	fmt.Println()
 	fmt.Println("=== USER MESSAGE ===")
 	fmt.Println(req.UserMessage)
+	if len(req.Attachments) > 0 {
+		fmt.Println()
+		fmt.Println("=== ATTACHMENTS ===")
+		for _, a := range req.Attachments {
+			fmt.Printf("%s  [%s, %s, %d bytes encoded]\n", a.Filename, a.Kind, a.MediaType, len(a.Data))
+		}
+	}
 	return "", nil
 }
