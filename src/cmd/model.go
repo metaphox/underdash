@@ -46,11 +46,11 @@ func chooseModel(ranked []string, interactive bool, in io.Reader, out io.Writer)
 		return ranked[0]
 	}
 
-	_, _ = fmt.Fprintln(out, "Select a model (press Enter for the first):")
+	fmt.Fprintln(out, "Select a model (press Enter for the first):")
 	for i, id := range ranked {
-		_, _ = fmt.Fprintf(out, "  %d) %s\n", i+1, id)
+		fmt.Fprintf(out, "  %d) %s\n", i+1, id)
 	}
-	_, _ = fmt.Fprint(out, "> ")
+	fmt.Fprint(out, "> ")
 
 	line, _ := bufio.NewReader(in).ReadString('\n')
 	line = strings.TrimSpace(line)

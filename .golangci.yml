@@ -11,6 +11,14 @@ linters:
     - staticcheck
     - unconvert
   settings:
+    errcheck:
+      # Writes to stderr/stdout/buffers are not actionable on failure; errcheck
+      # already excludes os.Stdout/os.Stderr — this extends that to any io.Writer
+      # (e.g. the testable writers in display.Verbosef and cmd.chooseModel).
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
     revive:
       rules:
         # style-decisions.md §Package comments

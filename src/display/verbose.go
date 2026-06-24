@@ -21,7 +21,7 @@ func Verbosef(format string, a ...any) {
 	if !verbose {
 		return
 	}
-	_, _ = fmt.Fprintf(verboseOut, "» "+format+"\n", a...)
+	fmt.Fprintf(verboseOut, "» "+format+"\n", a...)
 }
 
 // RedactKey masks all but the last four characters of a secret so it can be
