@@ -89,6 +89,8 @@ The backend can be overridden per invocation with `--backend <name>` (or `-b`).
 
 The `stdout` backend prints the fully assembled prompt to stdout without calling any model — useful for debugging and piping into other tools.
 
+The `openai`, `local`, and `http` backends all speak the OpenAI-compatible Chat Completions protocol and share a single implementation. They differ only in defaults: `openai` defaults to the public OpenAI endpoint and **requires** an API key; `local` and `http` **require** an explicit `endpoint` (e.g. an Ollama server at `http://localhost:11434/v1`) and treat the API key as optional, since many local servers need none. `local` is simply the conventional name for a localhost model server. An `endpoint` may be given as a base URL ending in `/v1` — the `/chat/completions` path is appended automatically — or as a full chat/completions URL.
+
 ### Execution Policy
 
 When underdash produces a shell command, the following policy determines what happens next:
@@ -161,6 +163,95 @@ output:
 - Suitable for piping into other commands (e.g., `_ show large files --output plain | head`).
 
 Both modes automatically detect when stdout is not a TTY and fall back to plain output.
+
+### Error Handling & Audit
+
+Underdash is a one-shot tool, so failures must be legible at a glance, and any command it runs on the user's behalf must be accountable after the fact. This section defines how errors are surfaced, what verbose mode exposes, and what is recorded to the audit log.
+
+#### Error Surfaces & Exit Codes
+
+Every error is reduced to a short, human-readable line on `stderr` — never a raw stack trace or an unstructured provider payload. Errors fall into a small set of categories with stable exit codes:
+
+| Category                  | Examples                                            | Exit code            |
+|---------------------------|-----------------------------------------------------|----------------------|
+| Success                   | command ran; explanation printed                    | 0                    |
+| Usage error               | unknown flag; invalid `--output` value              | 2                    |
+| Config error              | missing API key; unreadable config; unknown backend | 1                    |
+| Backend error             | HTTP 4xx/5xx; malformed stream; invalid model       | 1                    |
+| Network / timeout         | unreachable endpoint; no response headers in time   | 1                    |
+| Response error            | model returned non-JSON after all retries           | 1                    |
+| Policy denial             | generated command matched a `deny` pattern          | 1                    |
+| Executed command failed   | generated command itself exited non-zero            | the command's code   |
+| Cancelled                 | user pressed Ctrl+C (SIGINT/SIGTERM)                | 130                  |
+
+Exit codes are part of the tool's contract and must remain stable so scripts can branch on them.
+
+#### Friendly Error Output
+
+Backend and network errors carry structure rather than a flattened string. The canonical rendering is a summary line plus dimmed detail lines:
+
+```
+error: not found (claude, HTTP 404)
+  model: claude-sonnet-4-...
+  request id: req_011CcLF9...
+  hint: the model may be invalid or retired — verify backends.claude.model
+```
+
+- The **summary** humanizes the provider's machine error type (e.g. `not_found_error` → `not found`).
+- The **hint** offers status-specific remediation (401 → check API key; 404 → model/endpoint may be wrong; 429 → rate limited, retry; 5xx → provider issue, retry).
+- The raw provider payload is preserved only as a fallback, shown when the error envelope cannot be parsed.
+
+Timeouts and cancellation get their own concise lines (`backend timed out — …`, `cancelled`) instead of a generic failure. In TTY mode the summary is colorized and details are dimmed; in plain / non-TTY mode all decoration is dropped.
+
+#### Verbose Mode
+
+`--verbose` / `-v` raises diagnostic output on `stderr` without changing what lands on `stdout`, so pipes stay clean. It is additive to any output mode. (`--version` is the long form only; it does not share the `-v` shorthand.)
+
+Verbose output includes:
+
+- Resolved backend, model, and endpoint.
+- Which context signals were gathered or skipped (e.g. `git: yes`, `history: off`).
+- The fully assembled prompt actually sent (the same content the `stdout` backend prints).
+- Request timing and, when the backend reports it, token usage.
+- Each retry attempt and the reason it fired.
+- Risk classification and the policy decision for any generated command.
+
+Secrets are never emitted, even in verbose mode: API keys, `Authorization` / `x-api-key` headers, and environment-variable *values* are redacted. A deeper, development-only level for protocol tracing (raw SSE frames, HTTP headers) is gated behind `UNDERDASH_DEBUG=1`.
+
+#### Audit Log
+
+Because Underdash can execute shell commands, it can optionally keep an account of what it did. The audit log is **opt-in** — it may capture prompt text and command lines containing sensitive data — and is configured in `config.yaml`:
+
+```yaml
+audit:
+  enabled: true
+  path: ~/.local/state/underdash/audit.jsonl   # default location when enabled
+  max_size: 10MB                                # front-truncated when exceeded
+```
+
+Each invocation appends one JSON object per line (JSONL):
+
+```json
+{
+  "ts": "2026-06-24T10:15:30Z",
+  "query": "tar the newest directory",
+  "backend": "claude",
+  "model": "claude-sonnet-4-...",
+  "response_type": "command",
+  "command": "tar -czf newest.tgz ./latest",
+  "risk": "confirm",
+  "action": "executed",
+  "exit": 0,
+  "duration_ms": 1840
+}
+```
+
+Rules:
+
+- **Complete account.** Errors and policy denials are logged too (`action` is one of `executed`, `dry-run`, `denied`, `cancelled`, `declined`; an `error` field is added on failure), so the log records attempts, not just successes.
+- **Redaction.** Environment-variable values and configured API keys are never written. The verbatim query and generated command *are* recorded — these may still contain secrets the user typed, which is exactly why the log is opt-in.
+- **Bounded.** The log is append-only and front-truncated past `audit.max_size`, so it cannot grow without limit.
+- **Non-fatal.** An unwritable audit path produces a single startup warning and never blocks the primary task.
 
 ### Prompt Template
 

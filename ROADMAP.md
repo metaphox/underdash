@@ -35,34 +35,64 @@ old `TODO.md` (spec-gap checklist). Milestones are ordered; M1 items are release
   Covered by `input/parser_test.go` and `prompt/prompt_test.go`, verified end-to-end via the
   `stdout` backend.
 
-- [ ] **Backend timeout + cancellation.** `backend/claude.go` uses `http.DefaultClient` (no
-  timeout) and `main.go` has no signal handling, so a hung backend hangs forever and Ctrl+C
-  can't cancel a stream cleanly. Add an `http.Client` timeout and wire
-  `signal.NotifyContext(SIGINT)` into the root context.
+- [x] **Backend timeout + cancellation.** Done: shared `httpClient` in `backend/client.go`
+  with dial + TLS + response-header timeouts (streaming-safe — total stream duration is not
+  capped); `claude.go` uses it. `Execute` wires `signal.NotifyContext(SIGINT/SIGTERM)` into
+  the root context via `ExecuteContext`, so an in-flight request/stream aborts on Ctrl+C
+  (printing `cancelled`, exit 130; second signal force-quits). `renderError` shows a friendly
+  message for `net.Error` timeouts. Cancellation propagation covered by
+  `TestClaudeSend_ContextCancellation`.
 
-- [ ] **Harden the classifier against substitution.** `splitSegments` (`exec/classify.go`)
-  isn't shell-aware: `echo $(rm -rf ~)`, backticks, `eval`, and heredocs classify by the
-  outer safe command. Scan the full command for `$(`, backticks, `eval`, and sensitive
-  redirects before trusting per-segment safety. Also resolve the policy edge cases noted
-  previously: compound-command (`&&`, `|`, `;`) risk aggregation and whether `--yes` bypasses
-  `deny` (currently: it does not — keep that, document it).
+- [x] **Harden the classifier against substitution.** Done: `classifyBuiltin`
+  (`exec/classify.go`) now recursively classifies `$(...)` and backtick substitution bodies
+  and floors the overall risk by them, so an opaque or dangerous inner command can't auto-run
+  behind a safe outer command (`echo $(rm -rf ~)` → Dangerous; `echo $(mysterious)` →
+  Confirm; `echo $(date)` and `$((1+2))` arithmetic stay Safe). `eval` is now a dangerous
+  pattern. Compound `&&`/`||`/`;`/`|` risk aggregation was already handled by `classifySegments`
+  (highest-wins); `--yes` does **not** bypass `deny` (`Denied` tier, documented in
+  `classify.go`/`runner.go`).
 
-- [ ] **Tests for the above** — `--` split, timeout/cancellation, classifier substitution
-  cases; backfill missing unit tests for `input/`, `prompt/`, `exec/runner.go`.
+- [x] **Tests for the above** — done: `--` split (`input/parser_test.go`), `BuildUserMessage`
+  (`prompt/prompt_test.go`), context cancellation (`backend` `TestClaudeSend_ContextCancellation`),
+  and substitution/eval (`exec/classify_test.go` `TestClassify_Substitution`). Full suite: 105
+  passing. (Note: `exec/runner.go` `executeShell`/`promptUser` still lack direct unit tests —
+  they shell out and read stdin; deferred as non-blocking.)
 
 ## M2 — Backend completeness
 
-- [ ] **Implement `openai`** — reuse the OpenAI-shaped `backend.APIError` envelope already
-  added in `backend/error.go`.
-- [ ] **Implement a generic OpenAI-compatible `http`/`local` backend** (e.g. Ollama `/v1`),
-  and **resolve `local` vs `http`** — currently both are "call an HTTP endpoint"; either
-  merge them or define a crisp distinction.
-- [ ] **`--backend` integration tests** across the resolved backend set.
+- [x] **Implement `openai`** — done: `OpenAIBackend` (`backend/openai.go`) calls the Chat
+  Completions API over SSE, reusing the `parseAPIError` envelope. `New` requires a key and
+  defaults endpoint/model. Covered by `backend/openai_test.go` (stream concat, error event,
+  empty-stream, success via httptest, API error, cancellation).
+- [x] **Generic OpenAI-compatible `local`/`http` + resolve `local` vs `http`** — done:
+  resolved by **merging** — `local`/`http`/`openai` share `OpenAIBackend`; `local`/`http`
+  require an explicit endpoint and make the key optional (no `Authorization` header when
+  keyless, e.g. Ollama). `resolveChatEndpoint` appends `/chat/completions` to a `/v1` base.
+  Decision documented in SPEC `§Backend Abstraction`. Tested incl. the keyless path.
+- [x] **`--backend` integration tests** — done: `cmd/resolve_test.go` `TestResolveBackend`
+  exercises `--backend` / `default_backend` resolution across stdout/claude/openai/local/http,
+  including the missing-key and missing-endpoint error cases.
 
-## M3 — Privacy & version
+## M3 — Privacy, observability & version
 
-- [ ] **`--version` / `-v`** — currently absent. Print version plus the full data-disclosure
-  text so users can re-read what may be transmitted without resetting consent.
+See SPEC `§Error Handling & Audit` for the full design of the items below.
+
+- [ ] **`--version`** (long form only) — currently absent. Print version plus the full
+  data-disclosure text so users can re-read what may be transmitted without resetting consent.
+  Note: `-v` is reserved for `--verbose`, not version.
+- [ ] **`--verbose` / `-v`** — diagnostic output on `stderr` (stdout stays pipe-clean):
+  resolved backend/model/endpoint, context signals gathered/skipped, the assembled prompt,
+  request timing + token usage, retry attempts, and the risk/policy decision. Redact API keys,
+  auth headers, and env-var values; gate raw protocol tracing behind `UNDERDASH_DEBUG=1`.
+- [ ] **Audit log** — opt-in JSONL record of each invocation (query, backend, model,
+  response type, generated command, risk, action, exit code, duration). Config-gated
+  (`audit.enabled`, `audit.path`, `audit.max_size`); default path `~/.local/state/underdash/
+  audit.jsonl`. Append-only and front-truncated past `max_size`; records denials/errors too;
+  redacts api_key and env-var values; an unwritable path warns once and is non-fatal.
+- [ ] **Stable exit codes** — implement the contract in SPEC `§Error Surfaces & Exit Codes`
+  (0 success, 2 usage, 1 general/config/backend/network/response/policy, command's own code on
+  exec failure, 130 cancelled). Cancellation (130) and friendly backend errors are already
+  done in M1; this item nails down the remaining codes (usage=2, policy denial, exec passthrough).
 - [ ] **First-run privacy acknowledgment** — when a non-local backend (`claude`/`openai`/
   `http`) is configured, prompt once to acknowledge that local context is uploaded to a third
   party; persist consent (config flag or marker file under `~/.config/underdash/`); skip for

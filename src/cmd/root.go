@@ -5,8 +5,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -40,10 +43,19 @@ var (
 	}
 )
 
-// Execute runs the root command and exits the process on error.
+// Execute runs the root command and exits the process on error. The root
+// context is cancelled on SIGINT/SIGTERM so an in-flight backend request or
+// stream aborts cleanly; a second signal force-quits.
 func Execute() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	rootCmd.SetArgs(normalizeLeadingArgs(rootCmd.Flags(), os.Args[1:]))
-	if err := rootCmd.Execute(); err != nil {
+	if err := rootCmd.ExecuteContext(ctx); err != nil {
+		if errors.Is(err, context.Canceled) {
+			fmt.Fprintln(os.Stderr, "cancelled")
+			os.Exit(130)
+		}
 		renderError(err)
 		os.Exit(1)
 	}
@@ -55,6 +67,12 @@ func Execute() {
 func renderError(err error) {
 	if msg, ok := flagErrorHint(err); ok {
 		display.ShowError(msg)
+		return
+	}
+
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		display.ShowError("backend timed out — check your network connection or the backend endpoint")
 		return
 	}
 

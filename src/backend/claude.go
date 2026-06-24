@@ -85,7 +85,7 @@ func (c *ClaudeBackend) Send(ctx context.Context, req Request) (string, error) {
 	httpReq.Header.Set("x-api-key", c.APIKey)
 	httpReq.Header.Set("anthropic-version", anthropicVersion)
 
-	resp, err := http.DefaultClient.Do(httpReq)
+	resp, err := httpClient.Do(httpReq)
 	if err != nil {
 		return "", fmt.Errorf("send request: %w", err)
 	}

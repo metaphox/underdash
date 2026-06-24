@@ -45,6 +45,7 @@ var dangerousPatterns = []string{
 	"shutdown", "reboot", "init 0", "init 6",
 	"mkfs.", "wipefs",
 	"> /etc/", ">> /etc/",
+	"eval ", // executes a constructed string — opaque, treat as dangerous
 }
 
 // pipePatterns are dangerous patterns that span across pipe boundaries.
@@ -83,12 +84,34 @@ func ClassifyWithOverrides(command string, overrides *PolicyOverrides) RiskLevel
 		}
 	}
 
+	return classifyBuiltin(command)
+}
+
+// classifyBuiltin applies the hardcoded risk rules to a command, recursively
+// classifying any command-substitution / backtick bodies so that opaque inner
+// commands cannot be hidden behind a safe-looking outer command.
+func classifyBuiltin(command string) RiskLevel {
 	// Check pipe-to-shell patterns against the FULL command first.
 	if isPipeToShell(command) {
 		return Dangerous
 	}
 
-	// Now split into segments and classify each.
+	risk := classifySegments(command)
+
+	// Command substitutions and backticks execute opaque inner commands; their
+	// risk floors the overall risk so e.g. `echo $(curl x | sh)` cannot auto-run
+	// on the strength of the outer `echo`.
+	for _, inner := range extractSubstitutions(command) {
+		if r := classifyBuiltin(inner); r > risk {
+			risk = r
+		}
+	}
+	return risk
+}
+
+// classifySegments splits a command on &&, ||, ;, | and returns the highest
+// risk across segments (a compound command is as risky as its worst part).
+func classifySegments(command string) RiskLevel {
 	segments := splitSegments(command)
 
 	highest := Safe
@@ -133,6 +156,52 @@ func ClassifyWithOverrides(command string, overrides *PolicyOverrides) RiskLevel
 		return Confirm
 	}
 	return highest
+}
+
+// extractSubstitutions returns the inner command strings of any $(...) command
+// substitutions and `...` backtick substitutions in s. $((...)) arithmetic
+// expansion is intentionally excluded — it executes no command. Nested $(...)
+// are handled by the recursive caller (classifyBuiltin), which re-extracts from
+// each returned body.
+func extractSubstitutions(s string) []string {
+	var out []string
+
+	for i := 0; i < len(s); i++ {
+		if s[i] != '$' || i+1 >= len(s) || s[i+1] != '(' {
+			continue
+		}
+		// Scan to the matching close paren, tracking nesting.
+		depth := 1
+		j := i + 2
+		for ; j < len(s) && depth > 0; j++ {
+			switch s[j] {
+			case '(':
+				depth++
+			case ')':
+				depth--
+			}
+		}
+		if depth != 0 {
+			break // unbalanced; nothing more to extract
+		}
+		body := s[i+2 : j-1]
+		// Skip $((...)) arithmetic, whose body begins with the inner '('.
+		if !strings.HasPrefix(body, "(") {
+			out = append(out, body)
+		}
+		i = j - 1
+	}
+
+	// Backtick substitution bodies sit at odd indices between backticks.
+	if parts := strings.Split(s, "`"); len(parts) > 1 {
+		for k := 1; k < len(parts); k += 2 {
+			if parts[k] != "" {
+				out = append(out, parts[k])
+			}
+		}
+	}
+
+	return out
 }
 
 // matchGlob checks if a command matches a glob-style pattern.
