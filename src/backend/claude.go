@@ -89,7 +89,7 @@ func (c *ClaudeBackend) Send(ctx context.Context, req Request) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("send request: %w", err)
 	}
-	defer resp.Body.Close() //nolint:errcheck // best-effort cleanup //nolint:errcheck // best-effort cleanup
+	defer resp.Body.Close() //nolint:errcheck // best-effort cleanup
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)

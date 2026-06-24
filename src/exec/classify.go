@@ -10,7 +10,6 @@ import (
 type RiskLevel int
 
 // RiskLevel constants define execution risk categories.
-// RiskLevel constants define execution risk categories.
 const (
 	Safe      RiskLevel = iota // auto-run
 	Confirm                    // prompt y/n
