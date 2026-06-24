@@ -52,6 +52,16 @@ func (e *APIError) Hint() string {
 	return ""
 }
 
+// IsModelNotFound reports whether the error is a 404 caused by an unknown or
+// retired model (as opposed to, say, a wrong endpoint). It keys on the model
+// being named in the type or message, which both Anthropic and OpenAI do.
+func (e *APIError) IsModelNotFound() bool {
+	if e.StatusCode != 404 {
+		return false
+	}
+	return strings.Contains(e.Type, "model") || strings.Contains(strings.ToLower(e.Message), "model")
+}
+
 // parseAPIError builds an APIError from a non-2xx response body, unmarshalling
 // the common {"error":{"type","message"},"request_id"} envelope used by
 // Anthropic and OpenAI. Unparseable bodies are preserved in Raw.

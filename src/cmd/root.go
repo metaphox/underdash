@@ -10,11 +10,13 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 
+	"metaphox/underdash/audit"
 	"metaphox/underdash/backend"
 	"metaphox/underdash/display"
 	"metaphox/underdash/exec"
@@ -51,14 +53,21 @@ func Execute() {
 	defer stop()
 
 	rootCmd.SetArgs(normalizeLeadingArgs(rootCmd.Flags(), os.Args[1:]))
-	if err := rootCmd.ExecuteContext(ctx); err != nil {
-		if errors.Is(err, context.Canceled) {
-			fmt.Fprintln(os.Stderr, "cancelled")
-			os.Exit(130)
-		}
-		renderError(err)
-		os.Exit(1)
+	err := rootCmd.ExecuteContext(ctx)
+	if err == nil {
+		return
 	}
+
+	// Render the error, then exit with the code from the stable contract.
+	switch {
+	case errors.Is(err, context.Canceled):
+		fmt.Fprintln(os.Stderr, "cancelled")
+	case isExitError(err):
+		// The command already emitted its own output; don't double-report.
+	default:
+		renderError(err)
+	}
+	os.Exit(exitCodeFor(err))
 }
 
 // renderError pretty-prints an error to stderr, recognizing flag-usage errors
@@ -211,6 +220,8 @@ func registerRootFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("no-exec", false, "alias for --dry-run")
 	cmd.Flags().BoolP("yes", "y", false, "skip all confirmations")
 	cmd.Flags().String("output", "", "output mode: streaming or plain (default: streaming)")
+	cmd.Flags().BoolP("verbose", "v", false, "print diagnostics to stderr")
+	cmd.Flags().Bool("version", false, "print version and data disclosure")
 
 	// Stop parsing flags once the first bareword (the start of the prompt) is
 	// seen, so flags only count before the prompt. A standalone "--" still
@@ -220,6 +231,16 @@ func registerRootFlags(cmd *cobra.Command) {
 }
 
 func runRoot(cmd *cobra.Command, args []string) error {
+	// --version short-circuits everything, even with no prompt.
+	if v, _ := cmd.Flags().GetBool("version"); v {
+		fmt.Println(versionInfo())
+		return nil
+	}
+
+	if vb, _ := cmd.Flags().GetBool("verbose"); vb {
+		display.SetVerbose(true)
+	}
+
 	if len(args) == 0 {
 		return cmd.Help()
 	}
@@ -237,6 +258,7 @@ func runRoot(cmd *cobra.Command, args []string) error {
 	dryRun, _ := cmd.Flags().GetBool("dry-run") // err is nil; flag registered in init()
 	noExec, _ := cmd.Flags().GetBool("no-exec") // err is nil; flag registered in init()
 	dryRun = dryRun || noExec
+	autoYes, _ := cmd.Flags().GetBool("yes") // err is nil; flag registered in init()
 
 	// 1. Parse input. ArgsLenAtDash() locates a "--" the flag parser consumed;
 	// input.Parse also handles a literal "--" left in args.
@@ -244,6 +266,8 @@ func runRoot(cmd *cobra.Command, args []string) error {
 
 	// 2. Gather context.
 	sysCtx := sysinfo.Gather()
+	display.Verbosef("context: cwd=%s git=%t project=%s tools=%d history=%d",
+		sysCtx.CWD, sysCtx.InGitRepo, sysCtx.ProjectType, len(sysCtx.PathTools), len(sysCtx.ShellHistory))
 
 	// 3. Build prompt.
 	sysProm := prompt.BuildSystemPrompt()
@@ -251,15 +275,33 @@ func runRoot(cmd *cobra.Command, args []string) error {
 	userMsg := prompt.BuildUserMessage(inp)
 	fullSystemPrompt := sysProm + "\n\n" + ctxBlock
 
-	// 4. Resolve backend.
-	be, err := resolveBackend(cmd)
+	// 4. Resolve backend (resolves/discovers the model too).
+	be, cfg, err := resolveBackend(cmd.Context(), cmd)
 	if err != nil {
 		return err
 	}
+	display.Verbosef("backend: %s model=%s", be.Name(), cfg.Model)
+	display.Verbosef("system prompt:\n%s", fullSystemPrompt)
+	display.Verbosef("user message:\n%s", userMsg)
 
-	// 5. Send to backend with retry loop.
+	// 4b. First-run privacy acknowledgment for remote backends.
+	if err := ensureConsent(be.Name(), autoYes); err != nil {
+		return err
+	}
+
+	// 5. Send to backend with retry loop, self-healing a retired model once.
+	start := time.Now()
 	resp, err := sendWithRetry(cmd.Context(), be, fullSystemPrompt, userMsg)
 	if err != nil {
+		if healedBe, healed := maybeSelfHeal(cmd.Context(), cmd, &cfg, be, err); healed {
+			be = healedBe
+			resp, err = sendWithRetry(cmd.Context(), be, fullSystemPrompt, userMsg)
+		}
+	}
+	elapsed := time.Since(start).Milliseconds()
+	display.Verbosef("backend responded in %dms", elapsed)
+	if err != nil {
+		recordAudit(inp, be, nil, exec.Outcome{Action: "error"}, err, elapsed)
 		return err
 	}
 
@@ -269,8 +311,37 @@ func runRoot(cmd *cobra.Command, args []string) error {
 	}
 
 	// 6. Execute / display result.
-	autoYes, _ := cmd.Flags().GetBool("yes") // err is nil; flag registered in init()
-	return exec.Run(resp, autoYes, dryRun, loadPolicyOverrides())
+	outcome, runErr := exec.Run(resp, autoYes, dryRun, loadPolicyOverrides())
+	display.Verbosef("result: type=%s action=%s risk=%s", resp.Type, outcome.Action, outcome.Risk)
+	recordAudit(inp, be, resp, outcome, runErr, elapsed)
+	return runErr
+}
+
+// recordAudit writes one audit record (best-effort; a log failure only warns).
+func recordAudit(inp *input.ParsedInput, be backend.Backend, resp *response.Result, outcome exec.Outcome, err error, durationMs int64) {
+	query := inp.Query
+	if query == "" {
+		query = inp.SupplementaryPrompt
+	}
+	rec := audit.Record{
+		Query:      query,
+		Backend:    be.Name(),
+		Model:      viper.GetString("backends." + be.Name() + ".model"),
+		Action:     outcome.Action,
+		Risk:       outcome.Risk,
+		Exit:       exitCodeFor(err),
+		DurationMs: durationMs,
+	}
+	if resp != nil {
+		rec.ResponseType = string(resp.Type)
+		rec.Command = resp.Command
+	}
+	if err != nil {
+		rec.Error = err.Error()
+	}
+	if logErr := audit.Log(auditConfig(), rec); logErr != nil {
+		fmt.Fprintln(os.Stderr, "warning: audit log:", logErr)
+	}
 }
 
 // loadPolicyOverrides reads execution.auto_run / execution.confirm / execution.deny
@@ -358,21 +429,24 @@ func sendWithRetry(ctx context.Context, be backend.Backend, systemPrompt string,
 	return nil, fmt.Errorf("model did not return valid JSON after %d retries", maxRetries)
 }
 
-func resolveBackend(cmd *cobra.Command) (backend.Backend, error) {
-	backendName, _ := cmd.Flags().GetString("backend") // err is nil; flag registered in init()
+// selectedBackendName resolves the backend (config-section) name from the flag,
+// then config default, then the ultimate "claude" fallback.
+func selectedBackendName(cmd *cobra.Command) string {
+	name, _ := cmd.Flags().GetString("backend") // err is nil; flag registered in init()
+	if name == "" {
+		name = viper.GetString("default_backend")
+	}
+	if name == "" {
+		name = "claude" // ultimate default
+	}
+	return name
+}
 
-	// If not specified via flag, check config.
-	if backendName == "" {
-		backendName = viper.GetString("default_backend")
-	}
-	if backendName == "" {
-		backendName = "claude" // ultimate default
-	}
+func resolveBackend(ctx context.Context, cmd *cobra.Command) (backend.Backend, backend.Config, error) {
+	backendName := selectedBackendName(cmd)
 
 	// Build config for the backend.
-	cfg := backend.Config{
-		Type: backendName,
-	}
+	cfg := backend.Config{Type: backendName}
 
 	// For named backends, read from the backends.X config section.
 	prefix := "backends." + backendName + "."
@@ -396,7 +470,78 @@ func resolveBackend(cmd *cobra.Command) (backend.Backend, error) {
 		}
 	}
 
-	return backend.New(cfg)
+	be, err := backend.New(cfg)
+	if err != nil {
+		return nil, cfg, err
+	}
+
+	// Resolve the model dynamically when none is configured — model IDs are not
+	// hardcoded because providers retire them.
+	if cfg.Model == "" {
+		if lister, ok := be.(backend.ModelLister); ok {
+			autoYes, _ := cmd.Flags().GetBool("yes")
+			path := configFilePath()
+			writable := configWritable(path)
+			interactive := writable && display.IsTTY() && !autoYes
+
+			model, derr := resolveModelFor(ctx, lister, cfg.Type, interactive)
+			if derr != nil {
+				// claude/openai must have a model; local/http can let the server decide.
+				if cfg.Type == "claude" || cfg.Type == "openai" {
+					return nil, cfg, fmt.Errorf("couldn't determine a model for %s (%w); set backends.%s.model in your config", cfg.Type, derr, backendName)
+				}
+			} else {
+				cfg.Model = model
+				persistDiscoveredModel(path, backendName, model, writable)
+				if be, err = backend.New(cfg); err != nil {
+					return nil, cfg, err
+				}
+			}
+		}
+	}
+
+	return be, cfg, nil
+}
+
+// persistDiscoveredModel saves a freshly discovered model, warning (but
+// continuing) if the config can't be written.
+func persistDiscoveredModel(path, backendName, model string, writable bool) {
+	if writable {
+		if err := persistModel(path, backendName, model); err != nil {
+			display.ShowError(fmt.Sprintf("couldn't save model to %s (%v); using %s for now — set backends.%s.model to persist", path, err, model, backendName))
+		}
+		return
+	}
+	display.ShowError(fmt.Sprintf("couldn't save model to %s (not writable); using %s for now — set backends.%s.model to persist", path, model, backendName))
+}
+
+// maybeSelfHeal handles a model-not-found 404 by re-discovering a model,
+// updating config, and returning a rebuilt backend to retry with.
+func maybeSelfHeal(ctx context.Context, cmd *cobra.Command, cfg *backend.Config, be backend.Backend, sendErr error) (backend.Backend, bool) {
+	var apiErr *backend.APIError
+	if !errors.As(sendErr, &apiErr) || !apiErr.IsModelNotFound() {
+		return be, false
+	}
+	lister, ok := be.(backend.ModelLister)
+	if !ok {
+		return be, false
+	}
+	// Auto-pick a replacement; we're mid-request, so don't prompt.
+	newModel, derr := resolveModelFor(ctx, lister, cfg.Type, false)
+	if derr != nil || newModel == "" || newModel == cfg.Model {
+		return be, false
+	}
+
+	fmt.Fprintf(os.Stderr, "note: model %q is unavailable; switched to %q\n", cfg.Model, newModel)
+	cfg.Model = newModel
+	if path := configFilePath(); configWritable(path) {
+		_ = persistModel(path, selectedBackendName(cmd), newModel)
+	}
+	newBe, err := backend.New(*cfg)
+	if err != nil {
+		return be, false
+	}
+	return newBe, true
 }
 
 func defaultEnvKey(backendType string) string {

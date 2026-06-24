@@ -11,13 +11,19 @@ import (
 	"metaphox/underdash/response"
 )
 
+// Outcome reports what Run did, for the audit log.
+type Outcome struct {
+	Action string // explained | executed | dry-run | denied | declined
+	Risk   string // safe | confirm | dangerous | denied, or "" for non-commands
+}
+
 // Run executes or displays the model's response according to the execution policy.
 // overrides may be nil; when set, deny/auto_run/confirm patterns from config take precedence.
-func Run(resp *response.Result, autoYes bool, dryRun bool, overrides *PolicyOverrides) error {
+func Run(resp *response.Result, autoYes bool, dryRun bool, overrides *PolicyOverrides) (Outcome, error) {
 	switch resp.Type {
 	case response.Explanation:
 		display.ShowExplanation(resp.Explanation)
-		return nil
+		return Outcome{Action: "explained"}, nil
 
 	case response.Command:
 		return runCommand(resp.Command, resp.Explanation, autoYes, dryRun, overrides)
@@ -26,22 +32,25 @@ func Run(resp *response.Result, autoYes bool, dryRun bool, overrides *PolicyOver
 		return runScript(resp.Script, resp.Explanation, autoYes, dryRun)
 
 	default:
-		return fmt.Errorf("unknown response type: %q", resp.Type)
+		return Outcome{}, fmt.Errorf("unknown response type: %q", resp.Type)
 	}
 }
 
-func runCommand(command string, explanation string, autoYes bool, dryRun bool, overrides *PolicyOverrides) error {
+func runCommand(command string, explanation string, autoYes bool, dryRun bool, overrides *PolicyOverrides) (Outcome, error) {
 	risk := ClassifyWithOverrides(command, overrides)
 	display.ShowCommand(command, explanation)
+	out := Outcome{Risk: risk.String()}
 
 	// Denied is unconditional — --yes cannot bypass it.
 	if risk == Denied {
 		display.ShowError("Command is denied by execution policy.")
-		return fmt.Errorf("denied by policy")
+		out.Action = "denied"
+		return out, fmt.Errorf("denied by policy")
 	}
 
 	if dryRun {
-		return nil
+		out.Action = "dry-run"
+		return out, nil
 	}
 
 	if !autoYes {
@@ -49,25 +58,30 @@ func runCommand(command string, explanation string, autoYes bool, dryRun bool, o
 		case Confirm:
 			if !promptUser("Execute? [y/N] ") {
 				fmt.Fprintln(os.Stderr, "Cancelled.")
-				return nil
+				out.Action = "declined"
+				return out, nil
 			}
 		case Dangerous:
 			display.ShowError("This is a destructive command.")
 			if !promptUser("Execute anyway? [y/N] ") {
 				fmt.Fprintln(os.Stderr, "Cancelled.")
-				return nil
+				out.Action = "declined"
+				return out, nil
 			}
 		}
 	}
 
-	return executeShell(command)
+	out.Action = "executed"
+	return out, executeShell(command)
 }
 
-func runScript(script string, explanation string, autoYes bool, dryRun bool) error {
+func runScript(script string, explanation string, autoYes bool, dryRun bool) (Outcome, error) {
 	display.ShowScript(script, explanation)
+	out := Outcome{Risk: Dangerous.String()}
 
 	if dryRun {
-		return nil
+		out.Action = "dry-run"
+		return out, nil
 	}
 
 	// Scripts are always treated as dangerous because they hide multiple operations.
@@ -75,28 +89,30 @@ func runScript(script string, explanation string, autoYes bool, dryRun bool) err
 		display.ShowError("Review the script above carefully.")
 		if !promptUser("Execute? [y/N] ") {
 			fmt.Fprintln(os.Stderr, "Cancelled.")
-			return nil
+			out.Action = "declined"
+			return out, nil
 		}
 	}
 
 	// Write to temp file and execute.
+	out.Action = "executed"
 	tmp, err := os.CreateTemp("", "underdash-*.sh")
 	if err != nil {
-		return fmt.Errorf("create temp script: %w", err)
+		return out, fmt.Errorf("create temp script: %w", err)
 	}
 	defer os.Remove(tmp.Name()) //nolint:errcheck // best-effort cleanup of temp file
 
 	if _, err := tmp.WriteString(script); err != nil {
 		_ = tmp.Close() // close before returning error
-		return fmt.Errorf("write temp script: %w", err)
+		return out, fmt.Errorf("write temp script: %w", err)
 	}
 	_ = tmp.Close() // done writing; error would surface on re-read
 
 	if err := os.Chmod(tmp.Name(), 0700); err != nil {
-		return fmt.Errorf("chmod temp script: %w", err)
+		return out, fmt.Errorf("chmod temp script: %w", err)
 	}
 
-	return executeShell(tmp.Name())
+	return out, executeShell(tmp.Name())
 }
 
 func executeShell(command string) error {

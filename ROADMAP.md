@@ -72,43 +72,44 @@ old `TODO.md` (spec-gap checklist). Milestones are ordered; M1 items are release
 - [x] **`--backend` integration tests** — done: `cmd/resolve_test.go` `TestResolveBackend`
   exercises `--backend` / `default_backend` resolution across stdout/claude/openai/local/http,
   including the missing-key and missing-endpoint error cases.
+- [x] **Dynamic model resolution (no hardcoded model IDs)** — done: removed the hardcoded
+  `claude-sonnet-4-...`/`gpt-4o` defaults from `backend.New`. `backend/models.go` adds a
+  `ModelLister` (Claude + OpenAI `/v1/models`) and `RankModels` (durable family keywords).
+  When no model is configured, `resolveBackend` discovers one — interactive pick on a TTY,
+  auto-pick otherwise — and persists it to the config (`cmd/model.go` `persistModel`,
+  YAML round-trip preserving existing keys; warn-and-continue if unwritable). A retired model
+  self-heals on a model-not-found 404 (`APIError.IsModelNotFound` + `maybeSelfHeal`: re-discover,
+  rewrite config, retry once). Covered by `backend/models_test.go` and `cmd/{model,resolve}_test.go`,
+  verified end-to-end against a mock `/v1/models` + `/v1/chat/completions`.
 
 ## M3 — Privacy, observability & version
 
 See SPEC `§Error Handling & Audit` for the full design of the items below.
 
-- [ ] **`--version`** (long form only) — currently absent. Print version plus the full
-  data-disclosure text so users can re-read what may be transmitted without resetting consent.
-  Note: `-v` is reserved for `--verbose`, not version.
-- [ ] **`--verbose` / `-v`** — diagnostic output on `stderr` (stdout stays pipe-clean):
-  resolved backend/model/endpoint, context signals gathered/skipped, the assembled prompt,
-  request timing + token usage, retry attempts, and the risk/policy decision. Redact API keys,
-  auth headers, and env-var values; gate raw protocol tracing behind `UNDERDASH_DEBUG=1`.
-- [ ] **Audit log** — opt-in JSONL record of each invocation (query, backend, model,
-  response type, generated command, risk, action, exit code, duration). Config-gated
-  (`audit.enabled`, `audit.path`, `audit.max_size`); default path `~/.local/state/underdash/
-  audit.jsonl`. Append-only and front-truncated past `max_size`; records denials/errors too;
-  redacts api_key and env-var values; an unwritable path warns once and is non-fatal.
-- [ ] **Stable exit codes** — implement the contract in SPEC `§Error Surfaces & Exit Codes`
-  (0 success, 2 usage, 1 general/config/backend/network/response/policy, command's own code on
-  exec failure, 130 cancelled). Cancellation (130) and friendly backend errors are already
-  done in M1; this item nails down the remaining codes (usage=2, policy denial, exec passthrough).
-- [ ] **First-run privacy acknowledgment** — when a non-local backend (`claude`/`openai`/
-  `http`) is configured, prompt once to acknowledge that local context is uploaded to a third
-  party; persist consent (config flag or marker file under `~/.config/underdash/`); skip for
-  `stdout` and `local`.
+- [x] **`--version`** (long form only) — done: `cmd/version.go` `versionInfo()` prints the
+  version (`-ldflags`-overridable `version` var) plus the full disclosure text; handled at the
+  top of `runRoot` so it works with no prompt. `-v` is the `--verbose` shorthand, not version.
+- [x] **`--verbose` / `-v`** — done: `display.Verbosef` (gated, writes to stderr) wired into
+  `runRoot` to log resolved backend/model, context-signal summary, the assembled prompt, and
+  request timing. `display.RedactKey` masks key-shaped values. (`UNDERDASH_DEBUG=1` raw
+  protocol tracing and token-usage reporting deferred — not blocking.)
+- [x] **Audit log** — done: new `audit` package (`audit.Log`, JSONL, append + front-truncate
+  past `max_size`, non-fatal). Config via `auditConfigFrom` (`audit.enabled`/`path`/`max_size`,
+  `parseSize` handles `10MB`, default `~/.local/state/underdash/audit.jsonl`). `recordAudit`
+  in `runRoot` logs the execution outcome (and backend errors); records carry no api_key/env
+  values by construction. Verified end-to-end via env config.
+- [x] **Stable exit codes** — done: `cmd/exitcode.go` `exitCodeFor` (0/1/2/130 + command
+  passthrough via `*exec.ExitError`); `Execute` renders then exits with it. `exec.Run` now
+  returns an `Outcome{Action,Risk}` feeding both the audit record and the exit logic.
+- [x] **First-run privacy acknowledgment** — done: `cmd/consent.go` `ensureConsent` gates
+  remote backends (`claude`/`openai`/`http`; skips `local`/`stdout`) on a one-time marker at
+  `~/.config/underdash/consent`, prompting once with the disclosure. **Decisions made:** `--yes`
+  auto-accepts on first run; a single acknowledgment covers all remote backends (no re-prompt
+  on backend switch); disclosure text lives in code (`disclosureText`).
 
-  Disclosure must enumerate everything transmittable: OS/arch/shell; cwd **path**; top-level
-  listing (names only, capped 20); git branch + short status (includes modified/untracked
-  paths) + `origin` URL; project type + marker; recent commit subjects; notable `$PATH`
-  tools; shell history (opt-in only); **names** of env vars referenced (values never sent);
-  and the verbatim prompt text. *Note: env-var-name inclusion is specced but not yet wired —
-  `sysinfo`/`prompt` currently include no env vars at all, so the privacy guarantee holds by
-  omission today.*
-
-  Open sub-decisions: where to store consent; whether `--yes` auto-accepts on first run;
-  whether switching to a different remote backend re-prompts; disclosure text in code vs a
-  versioned `DISCLOSURE.md`.
+  *Note still open:* env-var-name inclusion remains unwired — `sysinfo`/`prompt` include no env
+  vars at all, so the privacy guarantee holds by omission today (the disclosure lists it as a
+  forward-looking item).
 
 ## M4 — Streaming UX (decide in or out for 1.0)
 

@@ -36,13 +36,11 @@ func New(cfg Config) (Backend, error) {
 		if cfg.APIKey == "" {
 			return nil, fmt.Errorf("claude backend requires an API key (set backends.claude.api_key in config or ANTHROPIC_API_KEY env var)")
 		}
-		model := cfg.Model
-		if model == "" {
-			model = "claude-sonnet-4-20250514"
-		}
+		// Model is left as-is (possibly empty); it is resolved via discovery in
+		// the cmd layer rather than hardcoded here, since pinned IDs get retired.
 		return &ClaudeBackend{
 			APIKey:   cfg.APIKey,
-			Model:    model,
+			Model:    cfg.Model,
 			Endpoint: cfg.Endpoint,
 		}, nil
 	case "openai":
@@ -53,11 +51,7 @@ func New(cfg Config) (Backend, error) {
 		if endpoint == "" {
 			endpoint = defaultOpenAIEndpoint
 		}
-		model := cfg.Model
-		if model == "" {
-			model = defaultOpenAIModel
-		}
-		return &OpenAIBackend{name: "openai", APIKey: cfg.APIKey, Model: model, Endpoint: endpoint}, nil
+		return &OpenAIBackend{name: "openai", APIKey: cfg.APIKey, Model: cfg.Model, Endpoint: endpoint}, nil
 	case "local", "http":
 		// Both are OpenAI-compatible HTTP endpoints the user supplies; "local"
 		// is the conventional name for a localhost model server. The endpoint is

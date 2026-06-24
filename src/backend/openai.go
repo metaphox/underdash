@@ -11,10 +11,7 @@ import (
 	"strings"
 )
 
-const (
-	defaultOpenAIEndpoint = "https://api.openai.com/v1"
-	defaultOpenAIModel    = "gpt-4o"
-)
+const defaultOpenAIEndpoint = "https://api.openai.com/v1"
 
 // OpenAIBackend calls an OpenAI-compatible Chat Completions API over SSE
 // streaming. It backs the "openai", "local", and "http" backend types — they

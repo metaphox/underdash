@@ -53,6 +53,26 @@ func TestNew_AllSpecTypes(t *testing.T) {
 	}
 }
 
+// New must not inject a hardcoded (retire-able) model ID when none is given;
+// model resolution happens later via discovery.
+func TestNew_NoHardcodedModel(t *testing.T) {
+	c, err := New(Config{Type: "claude", APIKey: "sk-test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m := c.(*ClaudeBackend).Model; m != "" {
+		t.Errorf("claude Model = %q, want empty (no hardcoded default)", m)
+	}
+
+	o, err := New(Config{Type: "openai", APIKey: "sk-test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m := o.(*OpenAIBackend).Model; m != "" {
+		t.Errorf("openai Model = %q, want empty (no hardcoded default)", m)
+	}
+}
+
 // --- Claude SSE streaming ---
 
 func TestReadClaudeStream_ConcatenatesTextDeltas(t *testing.T) {

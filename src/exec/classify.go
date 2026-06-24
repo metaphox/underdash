@@ -18,6 +18,21 @@ const (
 	Denied                     // unconditionally blocked, even --yes cannot bypass
 )
 
+// String returns the lowercase name of the risk level, used in audit records.
+func (r RiskLevel) String() string {
+	switch r {
+	case Safe:
+		return "safe"
+	case Confirm:
+		return "confirm"
+	case Dangerous:
+		return "dangerous"
+	case Denied:
+		return "denied"
+	}
+	return "unknown"
+}
+
 // PolicyOverrides holds user-configured execution policy from config.yaml.
 type PolicyOverrides struct {
 	AutoRun []string // glob patterns → Safe

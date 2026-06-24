@@ -47,7 +47,7 @@ Based on a quick skim of user input, Underdash should inspect the system *condit
 Underdash supports multiple named backends. Each backend is defined in `config.yaml` and one is designated as the default. A backend entry includes:
 
 - `type`: one of `claude`, `openai`, `local`, `http`, `stdout`
-- `model`: model identifier (e.g., `claude-sonnet-4-20250514`, `gpt-4o`)
+- `model`: model identifier (e.g., `claude-sonnet-4-20250514`, `gpt-4o`) — **optional**. When omitted, Underdash discovers an available model from the provider's `/v1/models` on first use (you pick interactively on a TTY, or it auto-selects a sensible default when non-interactive), then writes the choice back to this config so subsequent runs are stable. Model IDs are never hardcoded, since providers retire them; if a saved model is later retired, the next run self-heals by re-discovering and updating the config. If the config location is not writable, Underdash uses the discovered model for that run and warns that it could not persist it.
 - `endpoint`: API base URL (required for `http` and `local`; optional override for `claude`/`openai`)
 - `api_key`: API key string (optional — environment variables are preferred)
 - `env_key`: name of the environment variable holding the API key (e.g., `ANTHROPIC_API_KEY`)
