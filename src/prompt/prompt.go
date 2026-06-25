@@ -5,11 +5,14 @@ import (
 	"fmt"
 	"strings"
 
+	"metaphox/underdash/backend"
 	"metaphox/underdash/input"
 	"metaphox/underdash/sysinfo"
 )
 
 const systemPrompt = `You are a shell command assistant. You help users accomplish tasks on their system by producing shell commands, scripts, or explanations.
+
+The user may attach files (images, PDFs, or text), listed in the context's <attachments> section. When a file is attached, use its contents to inform your response; if they are asking about the file rather than requesting an action, respond with type "explanation".
 
 You MUST respond with a single valid JSON object and nothing else. No markdown, no commentary outside the JSON.
 
@@ -42,8 +45,11 @@ func BuildSystemPrompt() string {
 	return systemPrompt
 }
 
-// BuildContextBlock assembles the XML-tagged context block from gathered system context.
-func BuildContextBlock(ctx *sysinfo.SystemContext, inp *input.ParsedInput) string {
+// BuildContextBlock assembles the XML-tagged context block from gathered system
+// context, the parsed input, and any attachments the user referenced. The
+// attachment contents travel as backend content blocks; the <attachments>
+// section here names them so the model knows what those blocks are.
+func BuildContextBlock(ctx *sysinfo.SystemContext, inp *input.ParsedInput, atts []backend.Attachment) string {
 	var b strings.Builder
 
 	b.WriteString("<context>\n")
@@ -113,6 +119,15 @@ func BuildContextBlock(ctx *sysinfo.SystemContext, inp *input.ParsedInput) strin
 			fmt.Fprintf(&b, "  %s\n", line)
 		}
 		b.WriteString("</history>\n")
+	}
+
+	// Attachments — names the files whose contents are sent as content blocks.
+	if len(atts) > 0 {
+		b.WriteString("\n<attachments>\n")
+		for _, a := range atts {
+			fmt.Fprintf(&b, "  %s (%s, %s)\n", a.Filename, a.Kind, a.MediaType)
+		}
+		b.WriteString("</attachments>\n")
 	}
 
 	// Tool hints.

@@ -1,9 +1,12 @@
 package prompt
 
 import (
+	"strings"
 	"testing"
 
+	"metaphox/underdash/backend"
 	"metaphox/underdash/input"
+	"metaphox/underdash/sysinfo"
 )
 
 func TestBuildUserMessage(t *testing.T) {
@@ -36,4 +39,33 @@ func TestBuildUserMessage(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestBuildContextBlock_Attachments(t *testing.T) {
+	ctx := &sysinfo.SystemContext{OS: "darwin", Arch: "arm64"}
+	inp := &input.ParsedInput{Query: "describe"}
+
+	t.Run("section omitted when there are no attachments", func(t *testing.T) {
+		if got := BuildContextBlock(ctx, inp, nil); strings.Contains(got, "<attachments>") {
+			t.Errorf("expected no <attachments> section, got:\n%s", got)
+		}
+	})
+
+	t.Run("section lists each attachment", func(t *testing.T) {
+		atts := []backend.Attachment{
+			{Filename: "diagram.png", Kind: "image", MediaType: "image/png"},
+			{Filename: "report.pdf", Kind: "document", MediaType: "application/pdf"},
+		}
+		got := BuildContextBlock(ctx, inp, atts)
+		for _, want := range []string{
+			"<attachments>",
+			"diagram.png (image, image/png)",
+			"report.pdf (document, application/pdf)",
+			"</attachments>",
+		} {
+			if !strings.Contains(got, want) {
+				t.Errorf("context block missing %q; got:\n%s", want, got)
+			}
+		}
+	})
 }

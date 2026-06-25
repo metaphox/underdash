@@ -4,6 +4,8 @@ package display
 import (
 	"fmt"
 	"os"
+	"strings"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/term"
@@ -35,10 +37,11 @@ func IsPlainMode() bool {
 
 // Spinner shows a single-line progress indicator on stderr.
 type Spinner struct {
-	frames []string
-	stop   chan struct{}
-	done   chan struct{}
-	active bool
+	frames  []string
+	stop    chan struct{}
+	done    chan struct{}
+	active  bool
+	cleared atomic.Bool // set once the deadline countdown should stop
 }
 
 // NewSpinner creates a new spinner (does not start it).
@@ -50,12 +53,17 @@ func NewSpinner() *Spinner {
 	}
 }
 
-// Start begins the spinner with the given message. No-op in plain mode.
-func (s *Spinner) Start(msg string) {
+// Start begins the spinner. The line reads "<frame> <label> <elapsed>s · <detail>",
+// with detail omitted when empty. When deadline is non-zero, a "· timeout in <n>s"
+// countdown is shown during the final 10 seconds before it — until ClearDeadline
+// is called. No-op in plain mode.
+func (s *Spinner) Start(label, detail string, deadline time.Time) {
 	if IsPlainMode() {
 		return
 	}
 	s.active = true
+	s.cleared.Store(false)
+	start := time.Now()
 	go func() {
 		defer close(s.done)
 		i := 0
@@ -66,12 +74,40 @@ func (s *Spinner) Start(msg string) {
 				fmt.Fprintf(os.Stderr, "\r\033[K")
 				return
 			default:
-				fmt.Fprintf(os.Stderr, "\r%s %s", s.frames[i%len(s.frames)], msg)
+				var remaining time.Duration
+				countdown := !deadline.IsZero() && !s.cleared.Load()
+				if countdown {
+					remaining = time.Until(deadline)
+				}
+				line := formatSpinner(s.frames[i%len(s.frames)], label, time.Since(start), remaining, detail, countdown)
+				fmt.Fprintf(os.Stderr, "\r\033[K%s", line)
 				i++
 				time.Sleep(80 * time.Millisecond)
 			}
 		}
 	}()
+}
+
+// ClearDeadline stops the response-timeout countdown (e.g. once the backend has
+// responded). Safe to call concurrently with the render goroutine.
+func (s *Spinner) ClearDeadline() {
+	s.cleared.Store(true)
+}
+
+// formatSpinner builds the spinner line. The countdown segment is appended only
+// when countdown is true and fewer than 10 seconds remain.
+func formatSpinner(frame, label string, elapsed, remaining time.Duration, detail string, countdown bool) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s %s %ds", frame, label, int(elapsed/time.Second))
+	if detail != "" {
+		b.WriteString(" · ")
+		b.WriteString(detail)
+	}
+	if countdown && remaining < 10*time.Second {
+		n := max(int(remaining/time.Second), 0)
+		fmt.Fprintf(&b, " · timeout in %ds", n)
+	}
+	return b.String()
 }
 
 // Stop halts the spinner and clears the line.

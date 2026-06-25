@@ -136,6 +136,10 @@ func (c *ClaudeBackend) Send(ctx context.Context, req Request) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("send request: %w", err)
 	}
+	// Response headers have arrived; the first-byte timeout no longer applies.
+	if req.OnResponseStart != nil {
+		req.OnResponseStart()
+	}
 	defer resp.Body.Close() //nolint:errcheck // best-effort cleanup
 
 	if resp.StatusCode != http.StatusOK {

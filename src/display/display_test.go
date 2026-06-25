@@ -1,8 +1,81 @@
 package display
 
 import (
+	"strings"
 	"testing"
+	"time"
 )
+
+func TestFormatSpinner(t *testing.T) {
+	tests := []struct {
+		name      string
+		label     string
+		elapsed   time.Duration
+		remaining time.Duration
+		detail    string
+		countdown bool
+		want      string
+	}{
+		{
+			name:    "timer and detail",
+			label:   "Thinking",
+			elapsed: 12 * time.Second,
+			detail:  "claude/opus-4-8 · ctx: git, go",
+			want:    "X Thinking 12s · claude/opus-4-8 · ctx: git, go",
+		},
+		{
+			name:    "no detail",
+			label:   "Thinking",
+			elapsed: 3 * time.Second,
+			want:    "X Thinking 3s",
+		},
+		{
+			name:      "countdown shown under 10s",
+			label:     "Thinking",
+			elapsed:   53 * time.Second,
+			remaining: 7 * time.Second,
+			detail:    "claude/opus-4-8",
+			countdown: true,
+			want:      "X Thinking 53s · claude/opus-4-8 · timeout in 7s",
+		},
+		{
+			name:      "countdown hidden at or above 10s",
+			label:     "Thinking",
+			elapsed:   40 * time.Second,
+			remaining: 20 * time.Second,
+			countdown: true,
+			want:      "X Thinking 40s",
+		},
+		{
+			name:      "countdown not requested",
+			label:     "Thinking",
+			elapsed:   55 * time.Second,
+			remaining: 2 * time.Second,
+			countdown: false,
+			want:      "X Thinking 55s",
+		},
+		{
+			name:      "negative remaining clamps to zero",
+			label:     "Thinking",
+			elapsed:   61 * time.Second,
+			remaining: -2 * time.Second,
+			countdown: true,
+			want:      "X Thinking 61s · timeout in 0s",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := formatSpinner("X", tc.label, tc.elapsed, tc.remaining, tc.detail, tc.countdown)
+			if got != tc.want {
+				t.Errorf("formatSpinner() = %q, want %q", got, tc.want)
+			}
+			if !tc.countdown && strings.Contains(got, "timeout in") {
+				t.Errorf("countdown leaked into %q", got)
+			}
+		})
+	}
+}
 
 // --- Finding #4: TTY detection should check stdout, not stderr ---
 

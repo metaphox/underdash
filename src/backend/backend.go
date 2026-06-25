@@ -15,6 +15,10 @@ type Request struct {
 	// already validated and encoded. Backends that support multimodal content
 	// render these as content blocks; others degrade or reject as appropriate.
 	Attachments []Attachment
+	// OnResponseStart, if set, is called once the backend has received response
+	// headers (first byte), so the caller can stop a response-timeout countdown.
+	// Backends without a network round-trip (e.g. stdout) never call it.
+	OnResponseStart func()
 }
 
 // Attachment is a validated, encoded local file included in a Request.

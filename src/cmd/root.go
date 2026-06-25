@@ -246,7 +246,7 @@ func runRoot(cmd *cobra.Command, args []string) error {
 	// --sysinfo prints the gathered context spec and exits, even with no prompt.
 	if si, _ := cmd.Flags().GetBool("sysinfo"); si {
 		sysCtx := sysinfo.Gather()
-		fmt.Println(prompt.BuildContextBlock(sysCtx, &input.ParsedInput{}))
+		fmt.Println(prompt.BuildContextBlock(sysCtx, &input.ParsedInput{}, nil))
 		return nil
 	}
 
@@ -290,7 +290,7 @@ func runRoot(cmd *cobra.Command, args []string) error {
 
 	// 3. Build prompt.
 	sysProm := prompt.BuildSystemPrompt()
-	ctxBlock := prompt.BuildContextBlock(sysCtx, inp)
+	ctxBlock := prompt.BuildContextBlock(sysCtx, inp, atts)
 	userMsg := prompt.BuildUserMessage(inp)
 	fullSystemPrompt := sysProm + "\n\n" + ctxBlock
 
@@ -309,12 +309,22 @@ func runRoot(cmd *cobra.Command, args []string) error {
 	}
 
 	// 5. Send to backend with retry loop, self-healing a retired model once.
+	// detail is the spinner's status line: where the request is going and what
+	// local context it carries.
+	detail := modelLabel(be, cfg.Model)
+	if cs := contextSummary(sysCtx, len(atts)); cs != "" {
+		detail += " · ctx: " + cs
+	}
 	start := time.Now()
-	resp, err := sendWithRetry(cmd.Context(), be, fullSystemPrompt, userMsg, atts)
+	resp, err := sendWithRetry(cmd.Context(), be, fullSystemPrompt, userMsg, atts, detail)
 	if err != nil {
 		if healedBe, healed := maybeSelfHeal(cmd.Context(), cmd, &cfg, be, err); healed {
 			be = healedBe
-			resp, err = sendWithRetry(cmd.Context(), be, fullSystemPrompt, userMsg, atts)
+			detail = modelLabel(be, cfg.Model)
+			if cs := contextSummary(sysCtx, len(atts)); cs != "" {
+				detail += " · ctx: " + cs
+			}
+			resp, err = sendWithRetry(cmd.Context(), be, fullSystemPrompt, userMsg, atts, detail)
 		}
 	}
 	elapsed := time.Since(start).Milliseconds()
@@ -379,16 +389,54 @@ func loadPolicyOverrides() *exec.PolicyOverrides {
 	}
 }
 
-func sendWithRetry(ctx context.Context, be backend.Backend, systemPrompt string, userMsg string, atts []backend.Attachment) (*response.Result, error) {
+// modelLabel renders the backend and model compactly for the spinner, e.g.
+// "claude/opus-4-8", "openai/gpt-4o", "local/llama3". A leading "<backend>-" on
+// the model id is trimmed to avoid "claude/claude-opus-4-8". When the model is
+// not yet known (e.g. the stdout backend), just the backend name is shown.
+func modelLabel(be backend.Backend, model string) string {
+	if model == "" {
+		return be.Name()
+	}
+	return be.Name() + "/" + strings.TrimPrefix(model, be.Name()+"-")
+}
+
+// contextSummary lists which local context signals are being sent, for the
+// spinner — e.g. "git, go, 14 tools, 2 files". Empty when nothing was gathered.
+func contextSummary(sysCtx *sysinfo.SystemContext, attCount int) string {
+	var parts []string
+	if sysCtx.InGitRepo {
+		parts = append(parts, "git")
+	}
+	if sysCtx.ProjectType != "" {
+		parts = append(parts, sysCtx.ProjectType)
+	}
+	if n := len(sysCtx.PathTools); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d tools", n))
+	}
+	if len(sysCtx.ShellHistory) > 0 {
+		parts = append(parts, "history")
+	}
+	if attCount > 0 {
+		noun := "files"
+		if attCount == 1 {
+			noun = "file"
+		}
+		parts = append(parts, fmt.Sprintf("%d %s", attCount, noun))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func sendWithRetry(ctx context.Context, be backend.Backend, systemPrompt string, userMsg string, atts []backend.Attachment, detail string) (*response.Result, error) {
 	// Start spinner.
 	spin := display.NewSpinner()
-	spin.Start("Thinking...")
+	spin.Start("Thinking", detail, time.Now().Add(backend.ResponseHeaderTimeout))
 
 	raw, err := be.Send(ctx, backend.Request{
-		SystemPrompt: systemPrompt,
-		UserMessage:  userMsg,
-		MaxTokens:    2048,
-		Attachments:  atts,
+		SystemPrompt:    systemPrompt,
+		UserMessage:     userMsg,
+		MaxTokens:       2048,
+		Attachments:     atts,
+		OnResponseStart: spin.ClearDeadline,
 	})
 	spin.Stop()
 
@@ -420,13 +468,14 @@ func sendWithRetry(ctx context.Context, be backend.Backend, systemPrompt string,
 		combinedUserMsg := userMsg + "\n\n" + retryMsg
 
 		spin = display.NewSpinner()
-		spin.Start(fmt.Sprintf("Retrying (%d/%d)...", attempt, maxRetries))
+		spin.Start(fmt.Sprintf("Retrying (%d/%d)", attempt, maxRetries), detail, time.Now().Add(backend.ResponseHeaderTimeout))
 
 		raw, err = be.Send(ctx, backend.Request{
-			SystemPrompt: systemPrompt,
-			UserMessage:  combinedUserMsg,
-			MaxTokens:    2048,
-			Attachments:  atts,
+			SystemPrompt:    systemPrompt,
+			UserMessage:     combinedUserMsg,
+			MaxTokens:       2048,
+			Attachments:     atts,
+			OnResponseStart: spin.ClearDeadline,
 		})
 		spin.Stop()
 

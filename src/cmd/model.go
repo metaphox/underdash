@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/viper"
 	yaml "go.yaml.in/yaml/v3"
@@ -22,7 +23,7 @@ import (
 // top-ranked default otherwise). A spinner covers the network call.
 func resolveModelFor(ctx context.Context, lister backend.ModelLister, backendType string, interactive bool) (string, error) {
 	spin := display.NewSpinner()
-	spin.Start("Discovering available models...")
+	spin.Start("Discovering available models", "", time.Time{})
 	ids, err := lister.ListModels(ctx)
 	spin.Stop()
 	if err != nil {

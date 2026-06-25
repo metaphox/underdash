@@ -193,7 +193,16 @@ output:
 ```
 
 **`streaming` mode (default):**
-- While waiting for the backend: a single-line spinner below the cursor showing status (e.g., `⠋ thinking...`).
+- While waiting for the backend: a single-line spinner showing live status, e.g.
+  `⠋ Thinking 12s · claude/opus-4-8 · ctx: git, go, 14 tools, 2 files`. The fields are:
+  - **elapsed time** since the request started (counts up; there is no hard total
+    timeout, so this is elapsed rather than a countdown);
+  - the **backend/model** the request is going to (`<backend>/<model>`);
+  - a **`ctx:` summary** of which local context signals were sent (git, project
+    type, tool count, history, attachment count) — omitted when nothing was gathered.
+- A **`· timeout in <n>s`** countdown is appended only during the final 10 seconds
+  before the response (first-byte) timeout, as an early warning that the backend has
+  not responded. It disappears the moment the backend's response headers arrive.
 - As tokens arrive: streamed to the terminal in real time.
 - Final command output is printed cleanly after execution.
 
@@ -308,6 +317,8 @@ The prompt sent to the backend is assembled from fixed and dynamic parts. The fu
 ```
 You are a shell command assistant. You help users accomplish tasks on their system by producing shell commands, scripts, or explanations.
 
+The user may attach files (images, PDFs, or text), listed in the context's <attachments> section. When a file is attached, use its contents to inform your response; if they are asking about the file rather than requesting an action, respond with type "explanation".
+
 You MUST respond with a single valid JSON object and nothing else. No markdown, no commentary outside the JSON.
 
 JSON schema:
@@ -372,6 +383,12 @@ remote: {{.GitRemote}}
 </history>
 {{end}}
 
+{{if .Attachments}}
+<attachments>
+{{range .Attachments}}  {{.Filename}} ({{.Kind}}, {{.MediaType}})
+{{end}}</attachments>
+{{end}}
+
 {{if .ToolHints}}
 <tool_hints>
 {{.ToolHints}}
@@ -384,6 +401,7 @@ remote: {{.GitRemote}}
 - XML-style tags are used as structured delimiters (not actual XML — no need to escape content).
 - Sections are omitted entirely when not available (e.g., no `<git>` block outside a repo).
 - `<tool_hints>` is populated from the parser: the `--` separator becomes "Everything after the marker is supplementary context, not a tool request."
+- `<attachments>` names each `@<path>` file (filename, kind, media type) so the model knows what the accompanying content blocks are; the file *contents* travel as provider content blocks, not inside this text.
 
 #### User Message
 

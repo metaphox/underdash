@@ -11,8 +11,10 @@ import (
 // total stream duration, so a slow-but-valid streamed response is never
 // truncated. User-initiated aborts are handled separately via context.
 const (
-	dialTimeout           = 10 * time.Second
-	responseHeaderTimeout = 60 * time.Second
+	dialTimeout = 10 * time.Second
+	// ResponseHeaderTimeout is exported so the UI can count down to the same
+	// first-byte deadline this client enforces.
+	ResponseHeaderTimeout = 60 * time.Second
 )
 
 // httpClient is shared by all HTTP-based backends.
@@ -21,6 +23,6 @@ var httpClient = &http.Client{
 		Proxy:                 http.ProxyFromEnvironment,
 		DialContext:           (&net.Dialer{Timeout: dialTimeout}).DialContext,
 		TLSHandshakeTimeout:   dialTimeout,
-		ResponseHeaderTimeout: responseHeaderTimeout,
+		ResponseHeaderTimeout: ResponseHeaderTimeout,
 	},
 }
