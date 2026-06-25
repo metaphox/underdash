@@ -137,11 +137,31 @@ func ShowCommand(command string, explanation string) {
 	if IsPlainMode() {
 		fmt.Fprintf(os.Stderr, "> %s\n", command)
 	} else {
-		fmt.Fprintf(os.Stderr, "\033[1;32m❯\033[0m %s\n", command)
+		fmt.Fprintf(os.Stderr, "\033[1;32m❯\033[0m \033[97m%s\033[0m\n", command)
 	}
-	if explanation != "" {
+	showInlineExplanation(explanation)
+}
+
+// showInlineExplanation prints an explanation beneath a command or script. In
+// plain mode it stays a compact indented line; on a TTY it is rendered as a
+// Markdown block (same glamour path as ShowExplanation).
+func showInlineExplanation(explanation string) {
+	if explanation == "" {
+		return
+	}
+	if IsPlainMode() || !markdownEnabled {
 		fmt.Fprintf(os.Stderr, "  %s\n", explanation)
+		return
 	}
+	fmt.Fprint(os.Stderr, renderExplanation(explanation, false))
+}
+
+// Prompt returns the prompt string styled green on a TTY, plain otherwise.
+func Prompt(s string) string {
+	if IsPlainMode() {
+		return s
+	}
+	return "\033[32m" + s + "\033[0m"
 }
 
 // ShowExplanation prints an explanation to stdout. On a TTY (and when Markdown
@@ -201,9 +221,7 @@ func markdownWidth() int {
 
 // ShowScript prints a script and optional explanation.
 func ShowScript(script string, explanation string) {
-	if explanation != "" {
-		fmt.Fprintf(os.Stderr, "  %s\n", explanation)
-	}
+	showInlineExplanation(explanation)
 	fmt.Fprintf(os.Stderr, "---\n%s\n---\n", script)
 }
 

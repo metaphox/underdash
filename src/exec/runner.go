@@ -133,7 +133,7 @@ func executeShell(command string) error {
 }
 
 func promptUser(prompt string) bool {
-	fmt.Fprint(os.Stderr, prompt)
+	fmt.Fprint(os.Stderr, display.Prompt(prompt))
 	reader := bufio.NewReader(os.Stdin)
 	answer, _ := reader.ReadString('\n')
 	answer = strings.TrimSpace(strings.ToLower(answer))
