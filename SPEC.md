@@ -190,6 +190,7 @@ Underdash's output mode is configurable via `config.yaml` or the `--output` flag
 ```yaml
 output:
   mode: streaming   # or "plain"
+  markdown: true    # render explanation output as Markdown on a TTY (default: true)
 ```
 
 **`streaming` mode (default):**
@@ -204,14 +205,22 @@ output:
   before the response (first-byte) timeout, as an early warning that the backend has
   not responded. It disappears the moment the backend's response headers arrive.
 - As tokens arrive: streamed to the terminal in real time.
+- **`explanation`-type responses are rendered as Markdown** (headings, bold,
+  lists, inline code) with color and layout, via the `glamour` library (the engine
+  behind [Glow](https://github.com/charmbracelet/glow)), auto-styling for the
+  terminal's dark/light background and wrapping to its width. Disable with
+  `output.markdown: false` to print raw Markdown even on a TTY.
 - Final command output is printed cleanly after execution.
 
 **`plain` mode:**
 - No spinner, no ANSI escape codes.
 - Waits for the full response, then prints it to stdout.
+- Explanation output is the **raw Markdown** (no rendering), so it stays clean and
+  pipe-friendly.
 - Suitable for piping into other commands (e.g., `_ show large files --output plain | head`).
 
-Both modes automatically detect when stdout is not a TTY and fall back to plain output.
+Both modes automatically detect when stdout is not a TTY and fall back to plain
+output (including raw, unrendered explanations).
 
 ### Error Handling & Audit
 

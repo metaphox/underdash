@@ -263,6 +263,11 @@ func runRoot(cmd *cobra.Command, args []string) error {
 		display.SetOutputMode(outputMode)
 	}
 
+	// Markdown rendering of explanations: on by default, opt out via config.
+	if viper.IsSet("output.markdown") {
+		display.SetMarkdown(viper.GetBool("output.markdown"))
+	}
+
 	// Resolve dry-run: either --dry-run or --no-exec.
 	dryRun, _ := cmd.Flags().GetBool("dry-run") // err is nil; flag registered in init()
 	noExec, _ := cmd.Flags().GetBool("no-exec") // err is nil; flag registered in init()

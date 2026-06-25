@@ -8,15 +8,25 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/charmbracelet/glamour"
 	"golang.org/x/term"
 )
 
 // outputMode holds the configured output mode ("streaming" or "plain").
 var outputMode string
 
+// markdownEnabled controls whether explanation output is rendered as Markdown
+// on a TTY. It only takes effect outside plain mode.
+var markdownEnabled = true
+
 // SetOutputMode sets the output mode. Use "plain" to force plain output.
 func SetOutputMode(mode string) {
 	outputMode = mode
+}
+
+// SetMarkdown enables or disables Markdown rendering of explanation output.
+func SetMarkdown(enabled bool) {
+	markdownEnabled = enabled
 }
 
 // IsTTY returns true if stdout is a terminal.
@@ -134,9 +144,59 @@ func ShowCommand(command string, explanation string) {
 	}
 }
 
-// ShowExplanation prints an explanation to stdout.
+// ShowExplanation prints an explanation to stdout. On a TTY (and when Markdown
+// rendering is enabled) the text is treated as Markdown and rendered with color
+// and layout, like Glow; piped/plain output prints the raw Markdown so it stays
+// clean and pipe-friendly.
 func ShowExplanation(text string) {
-	fmt.Println(text)
+	plain := IsPlainMode() || !markdownEnabled
+	out := renderExplanation(text, plain)
+	if plain {
+		fmt.Println(out)
+	} else {
+		fmt.Print(out) // glamour already pads the rendered block with newlines
+	}
+}
+
+// renderExplanation returns the explanation ready to print: the raw text when
+// plain, otherwise Glow-style ANSI-rendered Markdown. Any rendering error falls
+// back to the raw text — display must never fail the command.
+func renderExplanation(text string, plain bool) string {
+	if plain {
+		return text
+	}
+	rendered, err := renderMarkdown(text)
+	if err != nil {
+		return text
+	}
+	return rendered
+}
+
+// renderMarkdown renders Markdown to ANSI using glamour (the library behind Glow),
+// auto-styling for the terminal's dark/light background and wrapping to its width.
+func renderMarkdown(text string) (string, error) {
+	r, err := glamour.NewTermRenderer(
+		glamour.WithAutoStyle(),
+		glamour.WithWordWrap(markdownWidth()),
+	)
+	if err != nil {
+		return "", err
+	}
+	return r.Render(text)
+}
+
+// markdownWidth returns the wrap width for rendered Markdown: the terminal width,
+// capped for readability, falling back to 80 when it can't be determined.
+func markdownWidth() int {
+	const (
+		fallback = 80
+		maxWidth = 120
+	)
+	w, _, err := term.GetSize(int(os.Stdout.Fd()))
+	if err != nil || w <= 0 {
+		return fallback
+	}
+	return min(w, maxWidth)
 }
 
 // ShowScript prints a script and optional explanation.

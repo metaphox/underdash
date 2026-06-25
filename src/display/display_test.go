@@ -6,6 +6,29 @@ import (
 	"time"
 )
 
+func TestRenderExplanation(t *testing.T) {
+	md := "# Title\n\nSome **bold** text and a list:\n\n- one\n- two\n"
+
+	t.Run("plain returns the input unchanged", func(t *testing.T) {
+		if got := renderExplanation(md, true); got != md {
+			t.Errorf("renderExplanation(plain) = %q, want unchanged input", got)
+		}
+	})
+
+	t.Run("non-plain transforms the markdown", func(t *testing.T) {
+		got := renderExplanation(md, false)
+		// glamour reflows and indents (and colorizes on a color terminal), so the
+		// rendered output must differ from the raw input and be non-empty. This
+		// holds regardless of the test environment's color support.
+		if got == "" {
+			t.Fatal("renderExplanation(non-plain) returned empty output")
+		}
+		if got == md {
+			t.Error("renderExplanation(non-plain) did not transform the markdown")
+		}
+	})
+}
+
 func TestFormatSpinner(t *testing.T) {
 	tests := []struct {
 		name      string
