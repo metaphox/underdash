@@ -1,7 +1,6 @@
 package backend
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -153,28 +152,14 @@ func (c *ClaudeBackend) Send(ctx context.Context, req Request) (string, error) {
 // readClaudeStream consumes an Anthropic Messages SSE stream and returns the
 // concatenated text from all `content_block_delta` text deltas.
 func readClaudeStream(r io.Reader, backendName string) (string, error) {
-	var sb strings.Builder
-	scanner := bufio.NewScanner(r)
-	// SSE lines can be long; bump the buffer.
-	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
-
-	for scanner.Scan() {
-		line := scanner.Text()
-		if !strings.HasPrefix(line, "data: ") {
-			continue
-		}
-		data := strings.TrimPrefix(line, "data: ")
-		if data == "" || data == "[DONE]" {
-			continue
-		}
-
+	return readSSEStream(r, func(data string, sb *strings.Builder) error {
 		var ev claudeStreamEvent
 		if err := json.Unmarshal([]byte(data), &ev); err != nil {
 			// Malformed event line — skip.
-			continue
+			return nil
 		}
 		if ev.Error != nil {
-			return "", &APIError{
+			return &APIError{
 				Backend: backendName,
 				Type:    ev.Error.Type,
 				Message: ev.Error.Message,
@@ -183,13 +168,6 @@ func readClaudeStream(r io.Reader, backendName string) (string, error) {
 		if ev.Type == "content_block_delta" && ev.Delta.Type == "text_delta" {
 			sb.WriteString(ev.Delta.Text)
 		}
-	}
-	if err := scanner.Err(); err != nil {
-		return "", fmt.Errorf("read stream: %w", err)
-	}
-
-	if sb.Len() == 0 {
-		return "", fmt.Errorf("empty response from API")
-	}
-	return sb.String(), nil
+		return nil
+	})
 }

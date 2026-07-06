@@ -179,7 +179,7 @@ Before sending anything to a backend, underdash performs a fast, local inspectio
 | Shell history        | **Opt-in only** (`context.history: true`)  | Last N commands from `~/.bash_history` / `~/.zsh_history` / etc.       |
 
 **Security rules:**
-- Environment variable *values* are never sent to the backend. Only variable *names* are included when they appear relevant to the query.
+- Environment variables are never sent to the backend: the gathered context includes neither their *values* nor their *names*. (Variable names typed by the user travel only as part of the verbatim prompt text. Including query-relevant names as structured context is a possible future extension; if added, values would still never be sent.)
 - Shell history is opt-in because it may contain secrets typed on the command line.
 - The context payload is always visible when using the `stdout` backend.
 

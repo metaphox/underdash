@@ -17,6 +17,11 @@ const (
 	maxDirEntries     = 20
 	defaultHistoryN   = 20
 	gitRecentCommitsN = 3
+
+	// historyScanBufSize / historyScanBufMax size the bufio.Scanner used to
+	// read shell history, whose lines can far exceed the 64K default.
+	historyScanBufSize = 64 * 1024
+	historyScanBufMax  = 1024 * 1024
 )
 
 // DirEntry is a single entry in the cwd listing with type and size metadata.
@@ -167,7 +172,7 @@ func (c *SystemContext) gatherShellHistory() {
 
 	var lines []string
 	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+	scanner.Buffer(make([]byte, historyScanBufSize), historyScanBufMax)
 	for scanner.Scan() {
 		if entry := parser(scanner.Text()); entry != "" {
 			lines = append(lines, entry)

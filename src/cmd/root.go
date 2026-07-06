@@ -27,7 +27,10 @@ import (
 	"metaphox/underdash/sysinfo"
 )
 
-const maxRetries = 3
+const (
+	maxRetries       = 3
+	defaultMaxTokens = 2048
+)
 
 var (
 	cfgFile string
@@ -274,68 +277,100 @@ func runRoot(cmd *cobra.Command, args []string) error {
 	dryRun = dryRun || noExec
 	autoYes, _ := cmd.Flags().GetBool("yes") // err is nil; flag registered in init()
 
-	// 1. Parse input. ArgsLenAtDash() locates a "--" the flag parser consumed;
+	s, err := setupRun(cmd, args, autoYes)
+	if err != nil {
+		return err
+	}
+	return executeRun(cmd, s, autoYes, dryRun)
+}
+
+// runSetup carries everything assembled before the backend call: parsed input,
+// attachments, gathered context, the composed prompts, and the resolved backend.
+type runSetup struct {
+	inp     *input.ParsedInput
+	atts    []backend.Attachment
+	sysCtx  *sysinfo.SystemContext
+	system  string // system prompt including the context block
+	userMsg string
+	be      backend.Backend
+	cfg     backend.Config
+}
+
+// setupRun parses input, loads attachments, gathers system context, builds the
+// prompts, and resolves the backend — everything that can fail fast before any
+// network call.
+func setupRun(cmd *cobra.Command, args []string, autoYes bool) (*runSetup, error) {
+	// Parse input. ArgsLenAtDash() locates a "--" the flag parser consumed;
 	// input.Parse also handles a literal "--" left in args.
 	inp := input.Parse(args, cmd.ArgsLenAtDash())
 
-	// 1b. Load any @file attachments, failing fast (before any backend call) on
+	// Load any @file attachments, failing fast (before any backend call) on
 	// unreadable, oversized, or unsupported files.
 	atts, err := attach.Load(inp.Attachments)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	for _, a := range atts {
 		display.Verbosef("attachment: %s (%s, %s)", a.Filename, a.Kind, a.MediaType)
 	}
 
-	// 2. Gather context.
 	sysCtx := sysinfo.Gather()
 	display.Verbosef("context: cwd=%s git=%t project=%s tools=%d history=%d",
 		sysCtx.CWD, sysCtx.InGitRepo, sysCtx.ProjectType, len(sysCtx.PathTools), len(sysCtx.ShellHistory))
 
-	// 3. Build prompt.
-	sysProm := prompt.BuildSystemPrompt()
-	ctxBlock := prompt.BuildContextBlock(sysCtx, inp, atts)
 	userMsg := prompt.BuildUserMessage(inp)
-	fullSystemPrompt := sysProm + "\n\n" + ctxBlock
+	fullSystemPrompt := prompt.BuildSystemPrompt() + "\n\n" + prompt.BuildContextBlock(sysCtx, inp, atts)
 
-	// 4. Resolve backend (resolves/discovers the model too).
+	// Resolve backend (resolves/discovers the model too).
 	be, cfg, err := resolveBackend(cmd.Context(), cmd)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	display.Verbosef("backend: %s model=%s", be.Name(), cfg.Model)
 	display.Verbosef("system prompt:\n%s", fullSystemPrompt)
 	display.Verbosef("user message:\n%s", userMsg)
 
-	// 4b. First-run privacy acknowledgment for remote backends.
+	// First-run privacy acknowledgment for remote backends.
 	if err := ensureConsent(be.Name(), autoYes); err != nil {
-		return err
+		return nil, err
 	}
 
-	// 5. Send to backend with retry loop, self-healing a retired model once.
-	// detail is the spinner's status line: where the request is going and what
-	// local context it carries.
-	detail := modelLabel(be, cfg.Model)
-	if cs := contextSummary(sysCtx, len(atts)); cs != "" {
+	return &runSetup{
+		inp:     inp,
+		atts:    atts,
+		sysCtx:  sysCtx,
+		system:  fullSystemPrompt,
+		userMsg: userMsg,
+		be:      be,
+		cfg:     cfg,
+	}, nil
+}
+
+// spinnerDetail builds the spinner's status line: where the request is going
+// and what local context it carries.
+func (s *runSetup) spinnerDetail() string {
+	detail := modelLabel(s.be, s.cfg.Model)
+	if cs := contextSummary(s.sysCtx, len(s.atts)); cs != "" {
 		detail += " · ctx: " + cs
 	}
+	return detail
+}
+
+// executeRun sends the prepared request with retries (self-healing a retired
+// model once), then executes or displays the result and records the audit log.
+func executeRun(cmd *cobra.Command, s *runSetup, autoYes bool, dryRun bool) error {
 	start := time.Now()
-	resp, err := sendWithRetry(cmd.Context(), be, fullSystemPrompt, userMsg, atts, detail)
+	resp, err := sendWithRetry(cmd.Context(), s.be, s.system, s.userMsg, s.atts, s.spinnerDetail())
 	if err != nil {
-		if healedBe, healed := maybeSelfHeal(cmd.Context(), cmd, &cfg, be, err); healed {
-			be = healedBe
-			detail = modelLabel(be, cfg.Model)
-			if cs := contextSummary(sysCtx, len(atts)); cs != "" {
-				detail += " · ctx: " + cs
-			}
-			resp, err = sendWithRetry(cmd.Context(), be, fullSystemPrompt, userMsg, atts, detail)
+		if healedBe, healed := maybeSelfHeal(cmd.Context(), cmd, &s.cfg, s.be, err); healed {
+			s.be = healedBe
+			resp, err = sendWithRetry(cmd.Context(), s.be, s.system, s.userMsg, s.atts, s.spinnerDetail())
 		}
 	}
 	elapsed := time.Since(start).Milliseconds()
 	display.Verbosef("backend responded in %dms", elapsed)
 	if err != nil {
-		recordAudit(inp, be, nil, exec.Outcome{Action: "error"}, err, elapsed)
+		recordAudit(s.inp, s.be, nil, exec.Outcome{Action: "error"}, err, elapsed)
 		return err
 	}
 
@@ -344,10 +379,9 @@ func runRoot(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// 6. Execute / display result.
 	outcome, runErr := exec.Run(resp, autoYes, dryRun, loadPolicyOverrides())
 	display.Verbosef("result: type=%s action=%s risk=%s", resp.Type, outcome.Action, outcome.Risk)
-	recordAudit(inp, be, resp, outcome, runErr, elapsed)
+	recordAudit(s.inp, s.be, resp, outcome, runErr, elapsed)
 	return runErr
 }
 
@@ -439,7 +473,7 @@ func sendWithRetry(ctx context.Context, be backend.Backend, systemPrompt string,
 	raw, err := be.Send(ctx, backend.Request{
 		SystemPrompt:    systemPrompt,
 		UserMessage:     userMsg,
-		MaxTokens:       2048,
+		MaxTokens:       defaultMaxTokens,
 		Attachments:     atts,
 		OnResponseStart: spin.ClearDeadline,
 	})
@@ -478,7 +512,7 @@ func sendWithRetry(ctx context.Context, be backend.Backend, systemPrompt string,
 		raw, err = be.Send(ctx, backend.Request{
 			SystemPrompt:    systemPrompt,
 			UserMessage:     combinedUserMsg,
-			MaxTokens:       2048,
+			MaxTokens:       defaultMaxTokens,
 			Attachments:     atts,
 			OnResponseStart: spin.ClearDeadline,
 		})

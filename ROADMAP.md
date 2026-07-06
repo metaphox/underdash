@@ -107,9 +107,9 @@ See SPEC `§Error Handling & Audit` for the full design of the items below.
   auto-accepts on first run; a single acknowledgment covers all remote backends (no re-prompt
   on backend switch); disclosure text lives in code (`disclosureText`).
 
-  *Note still open:* env-var-name inclusion remains unwired — `sysinfo`/`prompt` include no env
-  vars at all, so the privacy guarantee holds by omission today (the disclosure lists it as a
-  forward-looking item).
+  *Resolved:* env-var-name inclusion was never wired — `sysinfo`/`prompt` include no env vars
+  at all. The disclosure text and SPEC now state the actual behavior (nothing env-related is
+  gathered or sent); structured name inclusion remains a possible future extension.
 
 ## M4 — Streaming UX (decide in or out for 1.0)
 

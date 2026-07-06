@@ -37,7 +37,14 @@ type Backend interface {
 	Name() string
 }
 
-// Config holds backend-specific configuration read from Viper.
+// Config holds backend-specific configuration read from Viper. It mirrors the
+// uniform backends.<name>.{model,endpoint,api_key} config-file schema; which
+// fields are required depends on Type and is enforced by New:
+//
+//	claude:       APIKey required; Endpoint optional (defaults to the public API)
+//	openai:       APIKey required; Endpoint optional (defaults to the public API)
+//	local, http:  Endpoint required; APIKey optional (many local servers need none)
+//	stdout:       no fields used
 type Config struct {
 	Type     string
 	Model    string

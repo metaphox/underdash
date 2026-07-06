@@ -1,10 +1,45 @@
 package display
 
 import (
+	"io"
+	"os"
 	"strings"
 	"testing"
 	"time"
 )
+
+// captureStderr runs fn with os.Stderr redirected to a pipe and returns what
+// was written.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	return captureFile(t, &os.Stderr, fn)
+}
+
+// captureStdout runs fn with os.Stdout redirected to a pipe and returns what
+// was written.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	return captureFile(t, &os.Stdout, fn)
+}
+
+func captureFile(t *testing.T, f **os.File, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := *f
+	*f = w
+	defer func() { *f = old }()
+
+	fn()
+	w.Close()
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(out)
+}
 
 func TestRenderExplanation(t *testing.T) {
 	md := "# Title\n\nSome **bold** text and a list:\n\n- one\n- two\n"
@@ -132,4 +167,116 @@ func TestIsPlainMode_AutoDetect(t *testing.T) {
 	if !IsPlainMode() {
 		t.Skip("running in interactive terminal")
 	}
+}
+
+// --- Output helpers (plain mode; tests never run on a TTY) ---
+
+func TestShowCommand(t *testing.T) {
+	SetOutputMode("plain")
+	defer SetOutputMode("")
+
+	t.Run("command only", func(t *testing.T) {
+		got := captureStderr(t, func() { ShowCommand("ls -la", "") })
+		if got != "> ls -la\n" {
+			t.Errorf("ShowCommand output = %q", got)
+		}
+	})
+
+	t.Run("command with explanation", func(t *testing.T) {
+		got := captureStderr(t, func() { ShowCommand("ls -la", "lists files") })
+		if !strings.Contains(got, "> ls -la\n") || !strings.Contains(got, "  lists files\n") {
+			t.Errorf("ShowCommand output = %q", got)
+		}
+	})
+}
+
+func TestShowScript(t *testing.T) {
+	SetOutputMode("plain")
+	defer SetOutputMode("")
+
+	got := captureStderr(t, func() { ShowScript("#!/bin/sh\necho hi", "greets") })
+	for _, want := range []string{"  greets\n", "---\n#!/bin/sh\necho hi\n---\n"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("ShowScript output missing %q; got %q", want, got)
+		}
+	}
+}
+
+func TestShowError(t *testing.T) {
+	SetOutputMode("plain")
+	defer SetOutputMode("")
+
+	got := captureStderr(t, func() { ShowError("boom") })
+	if got != "error: boom\n" {
+		t.Errorf("ShowError output = %q", got)
+	}
+}
+
+func TestShowErrorDetails(t *testing.T) {
+	SetOutputMode("plain")
+	defer SetOutputMode("")
+
+	got := captureStderr(t, func() {
+		ShowErrorDetails("request failed", []string{"status 500", "id req_123"})
+	})
+	for _, want := range []string{"error: request failed\n", "  status 500\n", "  id req_123\n"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("ShowErrorDetails output missing %q; got %q", want, got)
+		}
+	}
+}
+
+func TestShowExplanation_Plain(t *testing.T) {
+	SetOutputMode("plain")
+	defer SetOutputMode("")
+
+	got := captureStdout(t, func() { ShowExplanation("# raw markdown") })
+	if got != "# raw markdown\n" {
+		t.Errorf("ShowExplanation output = %q, want raw markdown", got)
+	}
+}
+
+func TestShowCommandOutput(t *testing.T) {
+	t.Run("prints non-empty output", func(t *testing.T) {
+		got := captureStdout(t, func() { ShowCommandOutput("result\n") })
+		if got != "result\n" {
+			t.Errorf("ShowCommandOutput = %q", got)
+		}
+	})
+
+	t.Run("prints nothing for empty output", func(t *testing.T) {
+		got := captureStdout(t, func() { ShowCommandOutput("") })
+		if got != "" {
+			t.Errorf("ShowCommandOutput = %q, want empty", got)
+		}
+	})
+}
+
+func TestPrompt(t *testing.T) {
+	t.Run("plain mode returns unstyled", func(t *testing.T) {
+		SetOutputMode("plain")
+		defer SetOutputMode("")
+		if got := Prompt("Execute? "); got != "Execute? " {
+			t.Errorf("Prompt = %q", got)
+		}
+	})
+}
+
+func TestShowDryRun(t *testing.T) {
+	got := captureStdout(t, func() { ShowDryRun("sys prompt", "user msg") })
+	for _, want := range []string{"=== DRY RUN ===", "sys prompt", "user msg"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("ShowDryRun output missing %q", want)
+		}
+	}
+}
+
+func TestSpinner_PlainModeNoop(t *testing.T) {
+	SetOutputMode("plain")
+	defer SetOutputMode("")
+
+	s := NewSpinner()
+	s.Start("Thinking", "", time.Time{})
+	s.ClearDeadline()
+	s.Stop() // must not block or panic when Start was a no-op
 }

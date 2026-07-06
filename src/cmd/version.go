@@ -19,10 +19,11 @@ const disclosureText = `Underdash sends the following to the configured backend 
   - the detected project type and its marker file
   - notable tools found on your $PATH
   - shell history — only when explicitly enabled (context.history: true)
-  - the NAMES of environment variables referenced in your prompt (never values)
-  - your prompt text verbatim, including anything you paste into it
+  - your prompt text verbatim, including anything you paste into it (an
+    environment-variable name you type travels as part of the prompt)
 
-API keys and environment-variable VALUES are never transmitted or logged.`
+API keys and environment variables (names and values alike) are never
+gathered, transmitted, or logged.`
 
 // versionInfo returns the version line followed by the full data disclosure.
 func versionInfo() string {
