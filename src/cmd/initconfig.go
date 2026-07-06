@@ -23,7 +23,7 @@ backends:
     type: claude
     env_key: ANTHROPIC_API_KEY   # env var holding the API key
     # api_key: sk-ant-...        # or paste the key here (chmod 600 the file)
-    # api_key_file: ~/.secrets/llm-keys   # or read it from a file (raw key, or NAME=value pairs)
+    # api_key_file: .keys         # or read it from a file (raw key, or NAME=value pairs); relative to this config
     # model:                     # omit to auto-discover and pin the best model
   # openai:
   #   type: openai

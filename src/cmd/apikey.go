@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -17,14 +18,16 @@ import (
 // variable name (an explicit env_key or the per-type default). A configured
 // api_key_file that cannot be read or that yields no usable key is a hard error,
 // so a misconfigured path fails loudly instead of silently falling through.
-func resolveAPIKey(inlineKey, keyFile, envKey string) (string, error) {
+// A relative api_key_file is resolved against configDir, the directory holding
+// the config file, so `.keys` names a file sitting next to it.
+func resolveAPIKey(inlineKey, keyFile, envKey, configDir string) (string, error) {
 	if envKey != "" {
 		if v := os.Getenv(envKey); v != "" {
 			return v, nil
 		}
 	}
 	if keyFile != "" {
-		return readAPIKeyFile(keyFile, envKey)
+		return readAPIKeyFile(keyFile, envKey, configDir)
 	}
 	return inlineKey, nil
 }
@@ -32,9 +35,10 @@ func resolveAPIKey(inlineKey, keyFile, envKey string) (string, error) {
 // readAPIKeyFile reads an API key from path. The file is either a single value
 // holding the raw key, or dotenv-style `NAME=value` pairs so one file can serve
 // several backends; in the pairs case envKey selects which entry to use. A
-// leading "~/" in path is expanded against the user's home directory.
-func readAPIKeyFile(path, envKey string) (string, error) {
-	expanded := expandHome(path)
+// leading "~/" in path is expanded against the user's home directory; an
+// otherwise relative path is resolved against configDir.
+func readAPIKeyFile(path, envKey, configDir string) (string, error) {
+	expanded := resolveKeyFilePath(path, configDir)
 	data, err := os.ReadFile(expanded)
 	if err != nil {
 		return "", fmt.Errorf("read api_key_file %s: %w", path, err)
@@ -68,4 +72,16 @@ func readAPIKeyFile(path, envKey string) (string, error) {
 		return "", fmt.Errorf("api_key_file %s is empty", path)
 	}
 	return key, nil
+}
+
+// resolveKeyFilePath turns a configured api_key_file into a filesystem path. A
+// leading "~/" expands against the home directory; an absolute path is used
+// as-is; any other relative path is resolved against configDir so a bare name
+// like `.keys` refers to a file beside the config file.
+func resolveKeyFilePath(path, configDir string) string {
+	expanded := expandHome(path)
+	if configDir != "" && !filepath.IsAbs(expanded) {
+		return filepath.Join(configDir, expanded)
+	}
+	return expanded
 }

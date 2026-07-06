@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -581,7 +582,12 @@ func resolveBackend(ctx context.Context, cmd *cobra.Command) (backend.Backend, b
 	}
 
 	// The key comes from the env var, then api_key_file, then the inline api_key.
-	apiKey, err := resolveAPIKey(viper.GetString(prefix+"api_key"), viper.GetString(prefix+"api_key_file"), envKey)
+	// A relative api_key_file is resolved next to the config file that named it.
+	var configDir string
+	if used := viper.ConfigFileUsed(); used != "" {
+		configDir = filepath.Dir(used)
+	}
+	apiKey, err := resolveAPIKey(viper.GetString(prefix+"api_key"), viper.GetString(prefix+"api_key_file"), envKey, configDir)
 	if err != nil {
 		return nil, cfg, err
 	}
