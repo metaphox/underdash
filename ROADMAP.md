@@ -127,8 +127,8 @@ See SPEC `§Error Handling & Audit` for the full design of the items below.
 
 - [ ] **Docs** — flesh out `README.md` (install, config example, security note, usage
   examples); ensure `SPEC.md` matches final `--`/backend decisions.
-- [ ] **Repo hygiene** — remove the empty `code-review.md`, add `.DS_Store` to `.gitignore`.
-- [ ] **CI** — confirm build + `go test ./...` + `golangci-lint` run as gates.
+- [x] **Repo hygiene** — remove the empty `code-review.md`, add `.DS_Store` to `.gitignore`.
+- [x] **CI** — confirm build + `go test ./...` + `golangci-lint` run as gates.
 - [ ] **Tag `v1.0`.**
 
 ## Design decisions still pending

@@ -21,34 +21,34 @@ linters:
         - fmt.Fprintln
     revive:
       rules:
-        # style-decisions.md §Package comments
+        # https://google.github.io/styleguide/go/decisions#package-comments
         - name: package-comments
           severity: warning
-        # style-decisions.md §Doc comments — exported symbols need docs
+        # https://google.github.io/styleguide/go/decisions#doc-comments — exported symbols need docs
         - name: exported
           severity: warning
           arguments:
             - "checkPrivateReceivers"
             - "sayRepetitiveInsteadOfStutters"
-        # style-decisions.md §Variable names — receiver naming
+        # https://google.github.io/styleguide/go/decisions#receiver-names
         - name: receiver-naming
           severity: warning
-        # style-decisions.md §Package vs. exported symbol name
+        # https://google.github.io/styleguide/go/decisions#package-vs-identifier
         - name: unexported-return
           severity: warning
-        # best-practices.md — blank imports only in main or test
+        # https://google.github.io/styleguide/go/best-practices#import-blank — blank imports only in main or test
         - name: blank-imports
           severity: warning
-        # style-guide.md — context.Context as first param
+        # https://google.github.io/styleguide/go/guide#interfaces — context.Context as first param
         - name: context-as-argument
           severity: warning
-        # style-decisions.md — error return is last
+        # https://google.github.io/styleguide/go/decisions#error-flow — error return is last
         - name: error-return
           severity: warning
-        # style-decisions.md §Indent error flow
+        # https://google.github.io/styleguide/go/decisions#indent-error-flow
         - name: superfluous-else
           severity: warning
-        # style-decisions.md — don't use dot imports
+        # https://google.github.io/styleguide/go/decisions#import-dot — don't use dot imports
         - name: dot-imports
           severity: error
     staticcheck:
