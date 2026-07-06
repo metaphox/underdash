@@ -699,6 +699,9 @@ func initializeConfig(cmd *cobra.Command) error {
 		// ConfigFileNotFoundError) is expected rather than fatal here.
 		doInit, _ := cmd.Flags().GetBool("init")
 		if !errors.As(err, &configFileNotFoundError) && !(doInit && errors.Is(err, os.ErrNotExist)) {
+			if path := configFilePath(); path != "" {
+				return fmt.Errorf("config file %s: %w", path, err)
+			}
 			return err
 		}
 

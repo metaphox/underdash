@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
 
 // --- Finding #7: world-readable config warning ---
@@ -57,6 +58,34 @@ func TestCheckConfigPermissions_NoAPIKey(t *testing.T) {
 	warning := checkConfigPermissions(cfgPath)
 	if warning != "" {
 		t.Errorf("unexpected warning for config without api_key: %s", warning)
+	}
+}
+
+// A YAML parse error must name the offending config file so the user knows
+// which file to fix.
+func TestInitializeConfig_ParseErrorNamesFile(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	// A tab where YAML wants spaces is a parse error.
+	if err := os.WriteFile(cfgPath, []byte("output:\n\tmode: plain\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	oldCfg := cfgFile
+	cfgFile = cfgPath
+	t.Cleanup(func() { cfgFile = oldCfg })
+
+	cmd := &cobra.Command{}
+	cmd.Flags().Bool("init", false, "")
+
+	err := initializeConfig(cmd)
+	if err == nil {
+		t.Fatal("expected a parse error")
+	}
+	if !strings.Contains(err.Error(), cfgPath) {
+		t.Errorf("error %q does not name the config file %q", err, cfgPath)
 	}
 }
 

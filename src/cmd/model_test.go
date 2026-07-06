@@ -84,6 +84,85 @@ func TestPersistModel_PreservesExisting(t *testing.T) {
 	}
 }
 
+func TestPersistModel_PreservesComments(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte(defaultConfigTemplate), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := persistModel(path, "claude", "claude-opus-4-8"); err != nil {
+		t.Fatal(err)
+	}
+
+	// The whole file must be byte-for-byte the template with exactly one line
+	// inserted after env_key — every comment, blank line, and value untouched.
+	anchor := "    env_key: ANTHROPIC_API_KEY   # env var holding the API key\n"
+	want := strings.Replace(defaultConfigTemplate, anchor, anchor+"    model: claude-opus-4-8\n", 1)
+
+	raw, _ := os.ReadFile(path)
+	if got := string(raw); got != want {
+		t.Errorf("surgical insert changed more than one line.\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+	if m := readModel(t, path, "claude"); m != "claude-opus-4-8" {
+		t.Errorf("model = %q, want claude-opus-4-8", m)
+	}
+}
+
+func TestPersistModel_ReplacesExistingLineInPlace(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	existing := "# top comment\n" +
+		"backends:\n" +
+		"  claude:\n" +
+		"    type: claude\n" +
+		"    model: old-model   # pinned\n" +
+		"    env_key: ANTHROPIC_API_KEY\n"
+	if err := os.WriteFile(path, []byte(existing), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := persistModel(path, "claude", "new-model"); err != nil {
+		t.Fatal(err)
+	}
+
+	want := "# top comment\n" +
+		"backends:\n" +
+		"  claude:\n" +
+		"    type: claude\n" +
+		"    model: new-model   # pinned\n" +
+		"    env_key: ANTHROPIC_API_KEY\n"
+	raw, _ := os.ReadFile(path)
+	if got := string(raw); got != want {
+		t.Errorf("in-place replace differs.\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+}
+
+func TestPersistModel_RebuildWhenBackendAbsent(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	// A backend that is not yet in the file must still get type + model added.
+	existing := "default_backend: openai\nbackends:\n  openai:\n    type: openai\n"
+	if err := os.WriteFile(path, []byte(existing), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := persistModel(path, "claude", "claude-opus-4-8"); err != nil {
+		t.Fatal(err)
+	}
+
+	if m := readModel(t, path, "claude"); m != "claude-opus-4-8" {
+		t.Errorf("model = %q, want claude-opus-4-8", m)
+	}
+	// The pre-existing backend must survive.
+	if m := readBackendType(t, path, "openai"); m != "openai" {
+		t.Errorf("existing openai backend lost: type = %q", m)
+	}
+	if bt := readBackendType(t, path, "claude"); bt != "claude" {
+		t.Errorf("new backend type = %q, want claude", bt)
+	}
+}
+
 func TestConfigWritable(t *testing.T) {
 	dir := t.TempDir()
 	if !configWritable(filepath.Join(dir, "sub", "config.yaml")) {
@@ -120,4 +199,26 @@ func readModel(t *testing.T, path, backendName string) string {
 	}
 	m, _ := be["model"].(string)
 	return m
+}
+
+func readBackendType(t *testing.T, path, backendName string) string {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	backends, ok := doc["backends"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	be, ok := backends[backendName].(map[string]any)
+	if !ok {
+		return ""
+	}
+	ty, _ := be["type"].(string)
+	return ty
 }
