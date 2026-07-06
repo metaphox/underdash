@@ -90,9 +90,20 @@ Underdash supports multiple named backends. Each backend is defined in `config.y
 - `model`: model identifier (e.g., `claude-sonnet-4-20250514`, `gpt-4o`) — **optional**. When omitted, Underdash discovers an available model from the provider's `/v1/models` on first use (you pick interactively on a TTY, or it auto-selects a sensible default when non-interactive), then writes the choice back to this config so subsequent runs are stable. Model IDs are never hardcoded, since providers retire them; if a saved model is later retired, the next run self-heals by re-discovering and updating the config. If the config location is not writable, Underdash uses the discovered model for that run and warns that it could not persist it.
 - `endpoint`: API base URL (required for `http` and `local`; optional override for `claude`/`openai`)
 - `api_key`: API key string (optional — environment variables are preferred)
+- `api_key_file`: path to a file holding the API key (optional; a leading `~/` is expanded)
 - `env_key`: name of the environment variable holding the API key (e.g., `ANTHROPIC_API_KEY`)
 
-If both `api_key` and `env_key` are set, the environment variable takes precedence. When `env_key` is not configured, each backend type falls back to a conventional default — `claude` reads `ANTHROPIC_API_KEY`, `openai` reads `OPENAI_API_KEY` — so the env var works without any config file. Underdash should warn at startup if the config file containing an `api_key` is world-readable.
+The key is resolved from these sources, in order of precedence — the first that yields a value wins:
+
+1. the environment variable named by `env_key` (also fed by the `.env` loader below);
+2. the file named by `api_key_file`;
+3. the inline `api_key` string.
+
+When `env_key` is not configured, each backend type falls back to a conventional default — `claude` reads `ANTHROPIC_API_KEY`, `openai` reads `OPENAI_API_KEY` — so the env var works without any config file.
+
+An `api_key_file` is either a single value holding the raw key, or dotenv-style `NAME=value` pairs (with optional `export ` and surrounding quotes) so one file can serve several backends; in the pairs case, the entry named by the resolved `env_key` is selected. A configured `api_key_file` that cannot be read, or that has no entry matching `env_key`, is a hard error rather than a silent fall-through.
+
+Underdash should warn at startup if the config file containing an `api_key` is world-readable.
 
 #### .env Loading
 

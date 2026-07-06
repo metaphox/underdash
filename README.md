@@ -72,6 +72,9 @@ export ANTHROPIC_API_KEY=sk-ant-...
 export OPENAI_API_KEY=sk-...
 ```
 
+A `.env` next to the binary or a key in the config file work too — see
+[API keys](#api-keys) for exactly where each one goes.
+
 On first use of a remote backend, Underdash prints exactly what it transmits and asks
 you to acknowledge it once. See [Privacy](#privacy).
 
@@ -143,6 +146,7 @@ _ :rg find every TODO that mentions auth
 | `-v, --verbose` | Print diagnostics (context, prompt, timing) to stderr. |
 | `--version` | Print the version and the full data-disclosure notice. |
 | `--sysinfo` | Print the gathered local context and exit, without calling any backend. |
+| `--init` | Write a default, annotated config file and exit (prompts before overwriting; `--yes` forces). |
 | `--config <path>` | Use an alternate config file. |
 
 `--sysinfo` is the honest way to see exactly what context would be sent before you send
@@ -183,6 +187,8 @@ backends:
     type: claude
     # model: omit to auto-discover and pin
     env_key: ANTHROPIC_API_KEY   # which env var holds the key
+    # api_key_file: ~/.secrets/llm-keys   # or read the key from a file
+    # api_key: sk-ant-...        # or paste the key here (chmod 600 the file)
   local:
     type: local
     endpoint: http://localhost:11434/v1   # e.g. Ollama
@@ -219,8 +225,113 @@ audit:
   max_size: 10MB
 ```
 
-Underdash warns you if your config file contains API keys and is world-readable
-(`chmod 600` it).
+### Environment variables
+
+Every config key has an environment-variable equivalent: prefix `UNDERDASH_`, uppercase,
+and replace each `.` (and `-`) with `_`. So `output.mode` becomes `UNDERDASH_OUTPUT_MODE`
+and `backends.claude.model` becomes `UNDERDASH_BACKENDS_CLAUDE_MODEL`. Environment
+variables sit between CLI flags and the config file in precedence.
+
+| Variable | Overrides | Example |
+|----------|-----------|---------|
+| `UNDERDASH_DEFAULT_BACKEND` | `default_backend` | `claude` |
+| `UNDERDASH_BACKENDS_<NAME>_TYPE` | `backends.<name>.type` | `claude`, `openai`, `local`, `http`, `stdout` |
+| `UNDERDASH_BACKENDS_<NAME>_MODEL` | `backends.<name>.model` | `claude-opus-4-8` |
+| `UNDERDASH_BACKENDS_<NAME>_ENDPOINT` | `backends.<name>.endpoint` | `http://localhost:11434/v1` |
+| `UNDERDASH_BACKENDS_<NAME>_API_KEY` | `backends.<name>.api_key` | `sk-ant-...` |
+| `UNDERDASH_BACKENDS_<NAME>_API_KEY_FILE` | `backends.<name>.api_key_file` | `~/.secrets/llm-keys` |
+| `UNDERDASH_BACKENDS_<NAME>_ENV_KEY` | `backends.<name>.env_key` | `ANTHROPIC_API_KEY` |
+| `UNDERDASH_OUTPUT_MODE` | `output.mode` | `streaming`, `plain` |
+| `UNDERDASH_OUTPUT_MARKDOWN` | `output.markdown` | `true`, `false` |
+| `UNDERDASH_EXECUTION_AUTO_RUN` | `execution.auto_run` | `"docker ps *"` (see caveat) |
+| `UNDERDASH_EXECUTION_CONFIRM` | `execution.confirm` | `"git push *"` (see caveat) |
+| `UNDERDASH_EXECUTION_DENY` | `execution.deny` | `"rm -rf /*"` (see caveat) |
+| `UNDERDASH_CONTEXT_HISTORY` | `context.history` | `true`, `false` |
+| `UNDERDASH_CONTEXT_HISTORY_LINES` | `context.history_lines` | `20` |
+| `UNDERDASH_AUDIT_ENABLED` | `audit.enabled` | `true`, `false` |
+| `UNDERDASH_AUDIT_PATH` | `audit.path` | `~/.local/state/underdash/audit.jsonl` |
+| `UNDERDASH_AUDIT_MAX_SIZE` | `audit.max_size` | `10MB` |
+| `UNDERDASH_ATTACH_MAX_BYTES` | `attach.max_bytes` | `5242880` |
+
+`<NAME>` is the backend's config name (e.g. `CLAUDE`, `OPENAI`, `LOCAL`), so multiple
+backends each get their own set.
+
+> **Caveat — list values.** The `execution.*` keys are lists, and a value set via an
+> environment variable is split on whitespace. That shreds patterns containing spaces
+> (`UNDERDASH_EXECUTION_DENY="rm -rf /*"` becomes three entries), so set glob patterns
+> that contain spaces in the config file instead.
+
+Beyond these, `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` (or any name you point `env_key` at)
+supply the API key without the `UNDERDASH_` prefix — see [API keys](#api-keys).
+
+### API keys
+
+For a given backend, Underdash resolves the key from these sources, in order (the first
+one that yields a value wins):
+
+1. **Environment variable** (recommended). Each backend type has a default var —
+   `ANTHROPIC_API_KEY` for `claude`, `OPENAI_API_KEY` for `openai`. Set it in your
+   shell profile so it's exported for every session:
+
+   ```bash
+   # ~/.zshrc or ~/.bashrc
+   export ANTHROPIC_API_KEY=sk-ant-...
+   ```
+
+   To read from a differently-named variable, point `env_key` at it
+   (e.g. `env_key: MY_TEAM_KEY` under `backends.<name>`). A `.env` next to the binary
+   feeds this same source — see [.env loading](#env-loading) below.
+
+2. **A key file** via `backends.<name>.api_key_file`, a path (a leading `~/` is
+   expanded). Keeps the secret out of the config file itself. The file is either:
+
+   - **just the key** on its own:
+
+     ```
+     sk-ant-...
+     ```
+
+   - or **`NAME=value` pairs** (dotenv style, `export` and quotes allowed), so a single
+     file can hold keys for several backends. The entry named by the backend's
+     `env_key` is used:
+
+     ```
+     ANTHROPIC_API_KEY=sk-ant-...
+     OPENAI_API_KEY=sk-...
+     ```
+
+   ```yaml
+   backends:
+     claude:
+       type: claude
+       api_key_file: ~/.secrets/llm-keys   # chmod 600 it
+   ```
+
+   A configured `api_key_file` that can't be read, or that has no entry matching
+   `env_key`, is a hard error — a broken path fails loudly rather than silently
+   falling through.
+
+3. **Inline in the config file** via `backends.<name>.api_key`. Least safe, since the
+   key sits in the config in plaintext — `chmod 600 ~/.config/underdash/config.yaml`.
+   Underdash warns you if that file contains API keys and is world-readable.
+
+`local` / `http` backends usually need no key; supply one the same way only if your
+endpoint requires it.
+
+#### .env loading
+
+At startup, before reading the config, Underdash loads a `.env` file from the directory
+of the real binary (symlinks are resolved, so the `_` alias still finds it). Each
+`KEY=VALUE` line becomes an environment variable, feeding source 1 above — a handy place
+to keep keys without exporting them from your shell profile:
+
+```bash
+# /path/to/.env  (same directory as the underdash binary)
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+Variables already set in your shell are **not** overridden, and a missing or malformed
+`.env` is ignored — it's a convenience, not a requirement.
 
 ---
 

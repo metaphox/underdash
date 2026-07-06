@@ -40,3 +40,6 @@ go test ./...            # run all tests
 go test ./cmd/...        # run tests in a specific package
 go test -run TestName ./cmd/...  # run a single test
 ```
+
+## Conventions
+Version control is managed by the user, never commit on your own or ask the user if you should commit.

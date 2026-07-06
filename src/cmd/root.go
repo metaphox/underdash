@@ -227,6 +227,7 @@ func registerRootFlags(cmd *cobra.Command) {
 	cmd.Flags().BoolP("verbose", "v", false, "print diagnostics to stderr")
 	cmd.Flags().Bool("version", false, "print version and data disclosure")
 	cmd.Flags().Bool("sysinfo", false, "print gathered system information (spec format) and exit")
+	cmd.Flags().Bool("init", false, "write a default config file and exit")
 
 	// Stop parsing flags once the first bareword (the start of the prompt) is
 	// seen, so flags only count before the prompt. A standalone "--" still
@@ -251,6 +252,12 @@ func runRoot(cmd *cobra.Command, args []string) error {
 		sysCtx := sysinfo.Gather()
 		fmt.Println(prompt.BuildContextBlock(sysCtx, &input.ParsedInput{}, nil))
 		return nil
+	}
+
+	// --init writes a default config file and exits, even with no prompt.
+	if doInit, _ := cmd.Flags().GetBool("init"); doInit {
+		autoYes, _ := cmd.Flags().GetBool("yes")
+		return runInit(configFilePath(), autoYes, promptYesNo)
 	}
 
 	if len(args) == 0 {
@@ -564,20 +571,21 @@ func resolveBackend(ctx context.Context, cmd *cobra.Command) (backend.Backend, b
 	}
 	cfg.Model = viper.GetString(prefix + "model")
 	cfg.Endpoint = viper.GetString(prefix + "endpoint")
-	cfg.APIKey = viper.GetString(prefix + "api_key")
 
-	// Check env_key: if set, use the referenced env var for the API key.
-	// Falls back to a per-type default (e.g. ANTHROPIC_API_KEY for claude) so
-	// the env var works even without a config file declaring env_key.
+	// Resolve env_key: an explicit name, else a per-type default (e.g.
+	// ANTHROPIC_API_KEY for claude) so the env var works even without a config
+	// file declaring it. This also names the entry to read from a key file.
 	envKey := viper.GetString(prefix + "env_key")
 	if envKey == "" {
 		envKey = defaultEnvKey(cfg.Type)
 	}
-	if envKey != "" {
-		if v := os.Getenv(envKey); v != "" {
-			cfg.APIKey = v
-		}
+
+	// The key comes from the env var, then api_key_file, then the inline api_key.
+	apiKey, err := resolveAPIKey(viper.GetString(prefix+"api_key"), viper.GetString(prefix+"api_key_file"), envKey)
+	if err != nil {
+		return nil, cfg, err
 	}
+	cfg.APIKey = apiKey
 
 	be, err := backend.New(cfg)
 	if err != nil {
@@ -686,7 +694,11 @@ func initializeConfig(cmd *cobra.Command) error {
 	err := viper.ReadInConfig()
 	if err != nil {
 		var configFileNotFoundError viper.ConfigFileNotFoundError
-		if !errors.As(err, &configFileNotFoundError) {
+		// --init creates the config file, so a missing one (including an explicit
+		// --config path, which yields a plain os.ErrNotExist rather than
+		// ConfigFileNotFoundError) is expected rather than fatal here.
+		doInit, _ := cmd.Flags().GetBool("init")
+		if !errors.As(err, &configFileNotFoundError) && !(doInit && errors.Is(err, os.ErrNotExist)) {
 			return err
 		}
 
